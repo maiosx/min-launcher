@@ -145,13 +145,10 @@ Item {
 
         Rectangle {
             id: card
-            anchors.centerIn: parent
-            width: Math.min(980, parent.width - 40)
-            height: Math.min(700, parent.height - 48)
-            radius: root.cornerRadius
+            anchors.fill: parent
+            radius: 0
             color: root.cardBg
-            border.color: root.borderColor
-            border.width: 1
+            border.width: 0
             clip: true
 
             MouseArea {
@@ -161,8 +158,8 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 28
-                spacing: 16
+                anchors.margins: 48
+                spacing: 20
 
                 ColumnLayout {
                     Layout.fillWidth: true
@@ -188,8 +185,8 @@ Item {
                     height: 34
                     radius: 8
                     color: "#121216"
-                    border.color: searchField.activeFocus ? root.accent : root.borderColor
-                    border.width: 1
+                    border.color: searchField.activeFocus ? root.accent : "transparent"
+                    border.width: searchField.activeFocus ? 1 : 0
 
                     TextInput {
                         id: searchField
@@ -262,13 +259,12 @@ Item {
 
                             Rectangle {
                                 width: {
-                                    var cols = Math.max(2, Math.min(4, Math.floor(flick.width / 200)))
+                                    var cols = Math.max(2, Math.min(4, Math.floor(flick.width / 220)))
                                     return Math.floor(flick.width / cols)
                                 }
                                 height: catCol.implicitHeight + 24
                                 color: "transparent"
-                                border.color: root.borderColor
-                                border.width: 1
+                                border.width: 0
 
                                 ColumnLayout {
                                     id: catCol
