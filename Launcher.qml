@@ -22,7 +22,7 @@ Item {
     property var filteredApps: []
     property var sections: []
 
-    property color cardBg: "#0a0a0c"
+    property color cardBg: "#000000"
     property color textPrimary: "#f0f0f2"
     property color textMuted: "#8a8a96"
     property color accent: "#7c6af7"
@@ -136,7 +136,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            color: Qt.rgba(0, 0, 0, 0.5)
+            color: "#000000"
             MouseArea {
                 anchors.fill: parent
                 onClicked: root.dismiss()
@@ -184,7 +184,7 @@ Item {
                     Layout.fillWidth: true
                     height: 34
                     radius: 8
-                    color: "#121216"
+                    color: "#000000"
                     border.color: searchField.activeFocus ? root.accent : "transparent"
                     border.width: searchField.activeFocus ? 1 : 0
 
