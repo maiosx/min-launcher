@@ -20,14 +20,15 @@ Item {
 
     property var allApps: []
     property var filteredApps: []
+    property var sections: []
 
-    property color cardBg: "#111114"
+    property color cardBg: "#0a0a0c"
     property color textPrimary: "#f0f0f2"
     property color textMuted: "#8a8a96"
     property color accent: "#7c6af7"
     property color hoverBg: "#1c1c22"
     property color borderColor: "#2a2a32"
-    property int cornerRadius: 16
+    property int cornerRadius: 12
 
     function refreshApps() {
         root.allApps = Tools.buildAppList(root.appLibrary)
@@ -36,6 +37,7 @@ Item {
 
     function applyFilter() {
         root.filteredApps = Tools.filterApps(root.allApps, root.filterText)
+        root.sections = Tools.buildSections(root.filteredApps)
         if (root.selectedIndex >= root.filteredApps.length)
             root.selectedIndex = Math.max(0, root.filteredApps.length - 1)
     }
@@ -68,12 +70,8 @@ Item {
         else open(payloadJson || "{}")
     }
 
-    function launchAt(index) {
-        var list = root.filteredApps
-        if (index < 0 || index >= list.length) return
-        var app = list[index]
+    function launchApp(app) {
         if (!app || !app.appId) return
-
         if (root.appLibrary && typeof root.appLibrary.launch === "function") {
             root.appLibrary.launch(app.appId, app.name || app.appId)
         } else {
@@ -89,6 +87,19 @@ Item {
         dismiss()
     }
 
+    function launchAt(index) {
+        if (index < 0 || index >= root.filteredApps.length) return
+        launchApp(root.filteredApps[index])
+    }
+
+    function flatIndexOf(app) {
+        if (!app) return -1
+        for (var i = 0; i < root.filteredApps.length; i++) {
+            if (root.filteredApps[i].appId === app.appId) return i
+        }
+        return -1
+    }
+
     function moveSelection(delta) {
         var n = root.filteredApps.length
         if (n === 0) return
@@ -96,7 +107,6 @@ Item {
         if (next < 0) next = n - 1
         if (next >= n) next = 0
         root.selectedIndex = next
-        appList.positionViewAtIndex(next, ListView.Contain)
     }
 
     onFilterTextChanged: root.applyFilter()
@@ -126,7 +136,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            color: Qt.rgba(0, 0, 0, 0.55)
+            color: Qt.rgba(0, 0, 0, 0.5)
             MouseArea {
                 anchors.fill: parent
                 onClicked: root.dismiss()
@@ -136,8 +146,8 @@ Item {
         Rectangle {
             id: card
             anchors.centerIn: parent
-            width: Math.min(560, parent.width - 48)
-            height: Math.min(640, parent.height - 64)
+            width: Math.min(980, parent.width - 40)
+            height: Math.min(700, parent.height - 48)
             radius: root.cornerRadius
             color: root.cardBg
             border.color: root.borderColor
@@ -151,33 +161,33 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 20
-                spacing: 12
+                anchors.margins: 28
+                spacing: 16
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 2
+                    spacing: 4
 
                     Text {
                         text: "Apps"
                         color: root.textPrimary
-                        font.pixelSize: 22
+                        font.pixelSize: 26
                         font.weight: Font.DemiBold
                         font.family: "Inter, system-ui, sans-serif"
                     }
                     Text {
-                        text: root.filteredApps.length + " installed"
+                        text: root.filteredApps.length + " installed applications"
                         color: root.textMuted
-                        font.pixelSize: 12
+                        font.pixelSize: 13
                         font.family: "Inter, system-ui, sans-serif"
                     }
                 }
 
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 36
+                    height: 34
                     radius: 8
-                    color: root.hoverBg
+                    color: "#121216"
                     border.color: searchField.activeFocus ? root.accent : root.borderColor
                     border.width: 1
 
@@ -188,7 +198,7 @@ Item {
                         anchors.rightMargin: 12
                         verticalAlignment: TextInput.AlignVCenter
                         color: root.textPrimary
-                        font.pixelSize: 14
+                        font.pixelSize: 13
                         font.family: "Inter, system-ui, sans-serif"
                         selectByMouse: true
                         clip: true
@@ -221,116 +231,144 @@ Item {
                         anchors.fill: parent
                         anchors.leftMargin: 12
                         verticalAlignment: Text.AlignVCenter
-                        text: "Search apps…"
+                        text: "Filter apps…"
                         color: root.textMuted
-                        font.pixelSize: 14
+                        font.pixelSize: 13
                         visible: !searchField.text && !searchField.activeFocus
-                        opacity: 0.7
+                        opacity: 0.65
                     }
                 }
 
-                ListView {
-                    id: appList
+                Flickable {
+                    id: flick
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    contentWidth: width
+                    contentHeight: sectionsFlow.implicitHeight
                     clip: true
-                    model: root.filteredApps
-                    spacing: 2
-                    currentIndex: root.selectedIndex
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: ScrollBar {
                         policy: ScrollBar.AsNeeded
                         width: 6
                     }
 
-                    delegate: Rectangle {
-                        width: appList.width
-                        height: 44
-                        radius: 8
-                        color: {
-                            if (index === root.selectedIndex) return Qt.rgba(0.49, 0.42, 0.97, 0.18)
-                            if (rowMa.containsMouse) return root.hoverBg
-                            return "transparent"
-                        }
-                        border.color: index === root.selectedIndex ? root.accent : "transparent"
-                        border.width: index === root.selectedIndex ? 1 : 0
+                    Flow {
+                        id: sectionsFlow
+                        width: flick.width
+                        spacing: 0
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 10
-                            anchors.rightMargin: 10
-                            spacing: 10
+                        Repeater {
+                            model: root.sections
 
-                            Item {
-                                Layout.preferredWidth: 28
-                                Layout.preferredHeight: 28
-                                Layout.alignment: Qt.AlignVCenter
-
-                                Image {
-                                    anchors.fill: parent
-                                    source: {
-                                        if (!root.appLibrary || !modelData.icon) return ""
-                                        if (typeof root.appLibrary.iconSource === "function")
-                                            return root.appLibrary.iconSource(modelData.icon)
-                                        return ""
-                                    }
-                                    fillMode: Image.PreserveAspectFit
-                                    smooth: true
-                                    asynchronous: true
-                                    visible: status === Image.Ready
+                            Rectangle {
+                                width: {
+                                    var cols = Math.max(2, Math.min(4, Math.floor(flick.width / 200)))
+                                    return Math.floor(flick.width / cols)
                                 }
+                                height: catCol.implicitHeight + 24
+                                color: "transparent"
+                                border.color: root.borderColor
+                                border.width: 1
 
-                                Rectangle {
-                                    anchors.fill: parent
-                                    radius: 6
-                                    color: root.hoverBg
-                                    visible: parent.children[0].status !== Image.Ready
+                                ColumnLayout {
+                                    id: catCol
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 14
+                                    spacing: 8
 
                                     Text {
-                                        anchors.centerIn: parent
-                                        text: (modelData.name || "?").charAt(0).toUpperCase()
-                                        color: root.textMuted
+                                        text: modelData.title
+                                        color: root.textPrimary
                                         font.pixelSize: 13
                                         font.weight: Font.DemiBold
+                                        font.family: "Inter, system-ui, sans-serif"
+                                        Layout.fillWidth: true
+                                    }
+
+                                    Column {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+
+                                        Repeater {
+                                            model: modelData.tools
+
+                                            Rectangle {
+                                                width: catCol.width
+                                                height: 26
+                                                radius: 6
+                                                color: {
+                                                    var idx = root.flatIndexOf(modelData)
+                                                    if (idx === root.selectedIndex) return Qt.rgba(0.49, 0.42, 0.97, 0.2)
+                                                    if (rowMa.containsMouse) return root.hoverBg
+                                                    return "transparent"
+                                                }
+
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 4
+                                                    anchors.rightMargin: 4
+                                                    spacing: 8
+
+                                                    Item {
+                                                        Layout.preferredWidth: 16
+                                                        Layout.preferredHeight: 16
+                                                        Layout.alignment: Qt.AlignVCenter
+
+                                                        Image {
+                                                            anchors.fill: parent
+                                                            source: {
+                                                                if (!root.appLibrary || !modelData.icon) return ""
+                                                                if (typeof root.appLibrary.iconSource === "function")
+                                                                    return root.appLibrary.iconSource(modelData.icon)
+                                                                return ""
+                                                            }
+                                                            fillMode: Image.PreserveAspectFit
+                                                            smooth: true
+                                                            asynchronous: true
+                                                            visible: status === Image.Ready
+                                                        }
+
+                                                        Rectangle {
+                                                            anchors.fill: parent
+                                                            radius: 3
+                                                            color: accentDot(index)
+                                                            visible: parent.children[0].status !== Image.Ready
+                                                        }
+                                                    }
+
+                                                    Text {
+                                                        text: modelData.name || modelData.appId
+                                                        color: {
+                                                            var idx = root.flatIndexOf(modelData)
+                                                            return (idx === root.selectedIndex || rowMa.containsMouse)
+                                                                   ? root.textPrimary : root.textMuted
+                                                        }
+                                                        font.pixelSize: 12
+                                                        font.family: "Inter, system-ui, sans-serif"
+                                                        elide: Text.ElideRight
+                                                        Layout.fillWidth: true
+                                                    }
+                                                }
+
+                                                MouseArea {
+                                                    id: rowMa
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: root.launchApp(modelData)
+                                                    onContainsMouseChanged: {
+                                                        if (containsMouse) {
+                                                            var idx = root.flatIndexOf(modelData)
+                                                            if (idx >= 0) root.selectedIndex = idx
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                            }
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 1
-
-                                Text {
-                                    text: modelData.name || modelData.appId
-                                    color: root.textPrimary
-                                    font.pixelSize: 13
-                                    font.family: "Inter, system-ui, sans-serif"
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                }
-                                Text {
-                                    visible: !!(modelData.subtext)
-                                    text: modelData.subtext || ""
-                                    color: root.textMuted
-                                    font.pixelSize: 11
-                                    font.family: "Inter, system-ui, sans-serif"
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
-                                }
-                            }
-                        }
-
-                        MouseArea {
-                            id: rowMa
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                root.selectedIndex = index
-                                root.launchAt(index)
-                            }
-                            onContainsMouseChanged: {
-                                if (containsMouse) root.selectedIndex = index
                             }
                         }
                     }
@@ -342,7 +380,7 @@ Item {
                     color: root.textMuted
                     font.pixelSize: 11
                     horizontalAlignment: Text.AlignHCenter
-                    opacity: 0.65
+                    opacity: 0.6
                 }
             }
         }
@@ -367,5 +405,14 @@ Item {
                 }
             }
         }
+    }
+
+    function accentDot(i) {
+        var palette = [
+            "#60a5fa", "#a78bfa", "#f472b6", "#34d399",
+            "#fbbf24", "#fb7185", "#22d3ee", "#c084fc",
+            "#4ade80", "#f97316"
+        ]
+        return palette[i % palette.length]
     }
 }
