@@ -19,7 +19,6 @@ Item {
     readonly property var allTools: Tools.flatTools()
     readonly property var categories: Tools.categories
 
-    // Theme-ish defaults (Omarchy will often inject its own; these are fallbacks)
     property color bg: "#0a0a0c"
     property color cardBg: "#111114"
     property color textPrimary: "#f0f0f2"
@@ -53,19 +52,49 @@ Item {
         else open(payloadJson || "{}")
     }
 
-    function launchUrl(url) {
-        if (!url) return
-        Qt.openUrlExternally(url)
-        dismiss()
+    // Prefer native desktop app on Omarchy, then bare exec, then URL
+    function launchTool(tool) {
+        if (!tool) return
+
+        // 1) Desktop entry via gtk-launch under uwsm-app (Omarchy standard)
+        if (tool.desktop && String(tool.desktop).length > 0) {
+            var deskId = String(tool.desktop)
+            if (deskId.indexOf(".desktop") < 0)
+                deskId = deskId + ".desktop"
+            Quickshell.execDetached([
+                "sh", "-c",
+                "setsid -f uwsm-app -- gtk-launch \"$1\" >/dev/null 2>&1 || setsid -f gtk-launch \"$1\" >/dev/null 2>&1",
+                "sh", deskId
+            ])
+            dismiss()
+            return
+        }
+
+        // 2) Raw command (session-scoped via uwsm-app when possible)
+        if (tool.exec && String(tool.exec).length > 0) {
+            var cmd = String(tool.exec)
+            Quickshell.execDetached([
+                "sh", "-c",
+                "setsid -f uwsm-app -- bash -c \"$1\" >/dev/null 2>&1 || setsid -f bash -c \"$1\" >/dev/null 2>&1",
+                "sh", cmd
+            ])
+            dismiss()
+            return
+        }
+
+        // 3) Web fallback
+        if (tool.url && String(tool.url).length > 0) {
+            Qt.openUrlExternally(String(tool.url))
+            dismiss()
+        }
     }
 
     function launchAt(index) {
         var flat = root.allTools
         if (index >= 0 && index < flat.length)
-            launchUrl(flat[index].url)
+            launchTool(flat[index])
     }
 
-    // Fullscreen overlay window
     PanelWindow {
         id: panel
         visible: root.opened
@@ -82,7 +111,6 @@ Item {
             bottom: true
         }
 
-        // Scrim / backdrop
         Rectangle {
             anchors.fill: parent
             color: Qt.rgba(0, 0, 0, 0.55)
@@ -93,7 +121,6 @@ Item {
             }
         }
 
-        // Centered card
         Rectangle {
             id: card
             anchors.centerIn: parent
@@ -105,7 +132,6 @@ Item {
             border.width: 1
             clip: true
 
-            // Prevent clicks from closing when interacting with the card
             MouseArea {
                 anchors.fill: parent
                 onClicked: { /* absorb */ }
@@ -116,7 +142,6 @@ Item {
                 anchors.margins: 28
                 spacing: 18
 
-                // Header
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 4
@@ -129,14 +154,13 @@ Item {
                         font.family: "Inter, system-ui, sans-serif"
                     }
                     Text {
-                        text: "A list of useful tools for web-focused design engineers."
+                        text: "Native apps when installed · web links otherwise"
                         color: root.textMuted
                         font.pixelSize: 13
                         font.family: "Inter, system-ui, sans-serif"
                     }
                 }
 
-                // Scrollable content
                 Flickable {
                     id: flick
                     Layout.fillWidth: true
@@ -155,13 +179,11 @@ Item {
                         width: flick.width
                         spacing: 22
 
-                        // Top row: Inspiration | AI Code | Components
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 20
                             Layout.alignment: Qt.AlignTop
 
-                            // Inspiration (2-col internal)
                             CategoryBlock {
                                 Layout.fillWidth: true
                                 Layout.preferredWidth: 2
@@ -187,7 +209,6 @@ Item {
                             }
                         }
 
-                        // Bottom row: Web Utility | Desktop Utility | Video & Capture | Whiteboard
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 20
@@ -221,10 +242,9 @@ Item {
                     }
                 }
 
-                // Footer hint
                 Text {
                     Layout.fillWidth: true
-                    text: "Esc to close  ·  Click a tool to open"
+                    text: "Esc to close  ·  Native apps via uwsm-app / gtk-launch"
                     color: root.textMuted
                     font.pixelSize: 11
                     horizontalAlignment: Text.AlignHCenter
@@ -233,7 +253,6 @@ Item {
             }
         }
 
-        // Keyboard catcher
         Item {
             id: keyCatcher
             anchors.fill: parent
@@ -247,7 +266,6 @@ Item {
         }
     }
 
-    // Reusable category column
     component CategoryBlock: ColumnLayout {
         id: catRoot
         property string title: ""
@@ -268,7 +286,6 @@ Item {
             Layout.fillWidth: true
             spacing: 2
             flow: Flow.TopToBottom
-            // Approximate height for multi-column
             height: Math.ceil(catRoot.tools.length / Math.max(1, catRoot.columns)) * 26
 
             Repeater {
@@ -288,7 +305,6 @@ Item {
                         anchors.rightMargin: 6
                         spacing: 6
 
-                        // Small colored dot as "icon"
                         Rectangle {
                             width: 6
                             height: 6
@@ -305,6 +321,15 @@ Item {
                             elide: Text.ElideRight
                             Layout.fillWidth: true
                         }
+
+                        Text {
+                            visible: !!(modelData.desktop || modelData.exec)
+                            text: "⌘"
+                            color: root.accent
+                            font.pixelSize: 10
+                            opacity: 0.6
+                            Layout.alignment: Qt.AlignVCenter
+                        }
                     }
 
                     MouseArea {
@@ -312,7 +337,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.launchUrl(modelData.url)
+                        onClicked: root.launchTool(modelData)
                     }
                 }
             }
