@@ -1,5 +1,6 @@
-// Helpers for native-only app listing (Omarchy AppLibrary rows).
-// No web URLs — only installed .desktop applications.
+// Native-only helpers: group installed AppLibrary apps for the
+// Design Engineer Tools–style multi-column layout.
+// No web URLs.
 
 .pragma library
 
@@ -29,7 +30,41 @@ function entryIcon(entry) {
   return String(entry.icon || "")
 }
 
-// Build a flat list of { appId, name, subtext, icon } from AppLibrary.
+function entryCategories(entry) {
+  if (!entry) return []
+  try {
+    if (entry.categories && typeof entry.categories.join === "function")
+      return entry.categories.map(function(c) { return String(c || "") }).filter(function(c) { return c.length > 0 })
+    if (typeof entry.categories === "string" && entry.categories)
+      return entry.categories.split(";").map(function(c) { return c.trim() }).filter(function(c) { return c.length > 0 })
+  } catch (e) {}
+  return []
+}
+
+// Map FreeDesktop category tokens → display section titles (layout columns).
+var CATEGORY_MAP = [
+  { title: "Development", keys: ["Development", "IDE", "TextEditor", "Debugger", "GUIDesigner", "WebDevelopment"] },
+  { title: "Graphics", keys: ["Graphics", "2DGraphics", "3DGraphics", "RasterGraphics", "VectorGraphics", "Photography"] },
+  { title: "Internet", keys: ["Network", "WebBrowser", "Email", "Chat", "InstantMessaging", "FileTransfer", "RemoteAccess"] },
+  { title: "Office", keys: ["Office", "WordProcessor", "Spreadsheet", "Presentation", "Calendar", "ContactManagement"] },
+  { title: "Multimedia", keys: ["AudioVideo", "Audio", "Video", "Player", "Recorder", "TV"] },
+  { title: "System", keys: ["System", "Settings", "Monitor", "TerminalEmulator", "Filesystem", "Security"] },
+  { title: "Utility", keys: ["Utility", "Accessibility", "Archiving", "Compression", "FileTools", "TextTools", "Calculator"] },
+  { title: "Games", keys: ["Game", "ActionGame", "AdventureGame", "ArcadeGame", "BoardGame", "CardGame", "LogicGame", "RolePlaying", "Simulation", "SportsGame", "StrategyGame"] }
+]
+
+function sectionForCategories(cats) {
+  for (var i = 0; i < CATEGORY_MAP.length; i++) {
+    var section = CATEGORY_MAP[i]
+    for (var j = 0; j < cats.length; j++) {
+      for (var k = 0; k < section.keys.length; k++) {
+        if (cats[j] === section.keys[k]) return section.title
+      }
+    }
+  }
+  return "Apps"
+}
+
 function buildAppList(appLibrary) {
   var out = []
   if (!appLibrary || typeof appLibrary.sortedEntries !== "function")
@@ -44,11 +79,13 @@ function buildAppList(appLibrary) {
     if (!entry) continue
     var appId = entryId(entry)
     if (!appId) continue
+    var cats = entryCategories(entry)
     out.push({
       appId: appId,
       name: entryName(appLibrary, entry),
       subtext: entrySubtext(appLibrary, entry),
-      icon: entryIcon(entry)
+      icon: entryIcon(entry),
+      section: sectionForCategories(cats)
     })
   }
   return out
@@ -64,7 +101,7 @@ function filterApps(apps, query) {
   var matched = []
   for (var i = 0; i < list.length; i++) {
     var a = list[i]
-    var hay = (String(a.name || "") + " " + String(a.subtext || "") + " " + String(a.appId || "")).toLowerCase()
+    var hay = (String(a.name || "") + " " + String(a.subtext || "") + " " + String(a.appId || "") + " " + String(a.section || "")).toLowerCase()
     var ok = true
     for (var t = 0; t < tokens.length; t++) {
       if (hay.indexOf(tokens[t]) < 0) { ok = false; break }
@@ -72,4 +109,32 @@ function filterApps(apps, query) {
     if (ok) matched.push(a)
   }
   return matched
+}
+
+// Group filtered apps into ordered sections for the multi-column layout.
+function buildSections(apps) {
+  var order = ["Development", "Graphics", "Internet", "Office", "Multimedia", "System", "Utility", "Games", "Apps"]
+  var buckets = ({})
+  for (var o = 0; o < order.length; o++) buckets[order[o]] = []
+
+  var list = apps || []
+  for (var i = 0; i < list.length; i++) {
+    var a = list[i]
+    var sec = a.section || "Apps"
+    if (!buckets[sec]) buckets[sec] = []
+    buckets[sec].push(a)
+  }
+
+  var sections = []
+  for (var j = 0; j < order.length; j++) {
+    var title = order[j]
+    if (buckets[title] && buckets[title].length > 0)
+      sections.push({ title: title, tools: buckets[title] })
+  }
+  for (var key in buckets) {
+    if (order.indexOf(key) >= 0) continue
+    if (buckets[key].length > 0)
+      sections.push({ title: key, tools: buckets[key] })
+  }
+  return sections
 }
