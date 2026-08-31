@@ -12,14 +12,15 @@ Item {
     property var shell: null
     property var manifest: null
     property bool opened: false
-    property int selectedIndex: -1
+    property int selectedIndex: 0
     property string filterText: ""
 
     readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "min-launcher"
-    readonly property var allTools: Tools.flatTools()
-    readonly property var categories: Tools.categories
+    readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
 
-    property color bg: "#0a0a0c"
+    property var allApps: []
+    property var filteredApps: []
+
     property color cardBg: "#111114"
     property color textPrimary: "#f0f0f2"
     property color textMuted: "#8a8a96"
@@ -28,17 +29,32 @@ Item {
     property color borderColor: "#2a2a32"
     property int cornerRadius: 16
 
+    function refreshApps() {
+        root.allApps = Tools.buildAppList(root.appLibrary)
+        root.applyFilter()
+    }
+
+    function applyFilter() {
+        root.filteredApps = Tools.filterApps(root.allApps, root.filterText)
+        if (root.selectedIndex >= root.filteredApps.length)
+            root.selectedIndex = Math.max(0, root.filteredApps.length - 1)
+    }
+
     function open(payloadJson) {
-        root.opened = true
-        root.selectedIndex = -1
         root.filterText = ""
-        Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+        root.selectedIndex = 0
+        root.refreshApps()
+        root.opened = true
+        Qt.callLater(function() {
+            keyCatcher.forceActiveFocus()
+            searchField.forceActiveFocus()
+        })
     }
 
     function close() {
         root.opened = false
-        root.selectedIndex = -1
         root.filterText = ""
+        root.selectedIndex = 0
     }
 
     function dismiss() {
@@ -52,13 +68,16 @@ Item {
         else open(payloadJson || "{}")
     }
 
-    // Prefer native desktop app on Omarchy, then bare exec, then URL
-    function launchTool(tool) {
-        if (!tool) return
+    function launchAt(index) {
+        var list = root.filteredApps
+        if (index < 0 || index >= list.length) return
+        var app = list[index]
+        if (!app || !app.appId) return
 
-        // 1) Desktop entry via gtk-launch under uwsm-app (Omarchy standard)
-        if (tool.desktop && String(tool.desktop).length > 0) {
-            var deskId = String(tool.desktop)
+        if (root.appLibrary && typeof root.appLibrary.launch === "function") {
+            root.appLibrary.launch(app.appId, app.name || app.appId)
+        } else {
+            var deskId = String(app.appId)
             if (deskId.indexOf(".desktop") < 0)
                 deskId = deskId + ".desktop"
             Quickshell.execDetached([
@@ -66,33 +85,27 @@ Item {
                 "setsid -f uwsm-app -- gtk-launch \"$1\" >/dev/null 2>&1 || setsid -f gtk-launch \"$1\" >/dev/null 2>&1",
                 "sh", deskId
             ])
-            dismiss()
-            return
         }
-
-        // 2) Raw command (session-scoped via uwsm-app when possible)
-        if (tool.exec && String(tool.exec).length > 0) {
-            var cmd = String(tool.exec)
-            Quickshell.execDetached([
-                "sh", "-c",
-                "setsid -f uwsm-app -- bash -c \"$1\" >/dev/null 2>&1 || setsid -f bash -c \"$1\" >/dev/null 2>&1",
-                "sh", cmd
-            ])
-            dismiss()
-            return
-        }
-
-        // 3) Web fallback
-        if (tool.url && String(tool.url).length > 0) {
-            Qt.openUrlExternally(String(tool.url))
-            dismiss()
-        }
+        dismiss()
     }
 
-    function launchAt(index) {
-        var flat = root.allTools
-        if (index >= 0 && index < flat.length)
-            launchTool(flat[index])
+    function moveSelection(delta) {
+        var n = root.filteredApps.length
+        if (n === 0) return
+        var next = root.selectedIndex + delta
+        if (next < 0) next = n - 1
+        if (next >= n) next = 0
+        root.selectedIndex = next
+        appList.positionViewAtIndex(next, ListView.Contain)
+    }
+
+    onFilterTextChanged: root.applyFilter()
+
+    Connections {
+        target: root.appLibrary
+        function onAppsChanged() {
+            if (root.opened) root.refreshApps()
+        }
     }
 
     PanelWindow {
@@ -101,7 +114,7 @@ Item {
         color: "transparent"
         exclusionMode: ExclusionMode.Ignore
         WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: WlrKeyboardFocus.OnDemand
+        WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
         WlrLayershell.namespace: "min-launcher"
 
         anchors {
@@ -114,7 +127,6 @@ Item {
         Rectangle {
             anchors.fill: parent
             color: Qt.rgba(0, 0, 0, 0.55)
-
             MouseArea {
                 anchors.fill: parent
                 onClicked: root.dismiss()
@@ -124,8 +136,8 @@ Item {
         Rectangle {
             id: card
             anchors.centerIn: parent
-            width: Math.min(980, parent.width - 48)
-            height: Math.min(720, parent.height - 64)
+            width: Math.min(560, parent.width - 48)
+            height: Math.min(640, parent.height - 64)
             radius: root.cornerRadius
             color: root.cardBg
             border.color: root.borderColor
@@ -139,104 +151,186 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 28
-                spacing: 18
+                anchors.margins: 20
+                spacing: 12
 
                 ColumnLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    spacing: 2
 
                     Text {
-                        text: "Design Engineer Tools"
+                        text: "Apps"
                         color: root.textPrimary
-                        font.pixelSize: 26
+                        font.pixelSize: 22
                         font.weight: Font.DemiBold
                         font.family: "Inter, system-ui, sans-serif"
                     }
                     Text {
-                        text: "Native apps when installed · web links otherwise"
+                        text: root.filteredApps.length + " installed"
                         color: root.textMuted
-                        font.pixelSize: 13
+                        font.pixelSize: 12
                         font.family: "Inter, system-ui, sans-serif"
                     }
                 }
 
-                Flickable {
-                    id: flick
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 36
+                    radius: 8
+                    color: root.hoverBg
+                    border.color: searchField.activeFocus ? root.accent : root.borderColor
+                    border.width: 1
+
+                    TextInput {
+                        id: searchField
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        verticalAlignment: TextInput.AlignVCenter
+                        color: root.textPrimary
+                        font.pixelSize: 14
+                        font.family: "Inter, system-ui, sans-serif"
+                        selectByMouse: true
+                        clip: true
+                        text: root.filterText
+                        onTextChanged: root.filterText = text
+
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_Escape) {
+                                if (root.filterText.length > 0) {
+                                    root.filterText = ""
+                                    searchField.text = ""
+                                } else {
+                                    root.dismiss()
+                                }
+                                event.accepted = true
+                            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab) {
+                                root.moveSelection(1)
+                                event.accepted = true
+                            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Backtab) {
+                                root.moveSelection(-1)
+                                event.accepted = true
+                            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                                root.launchAt(root.selectedIndex)
+                                event.accepted = true
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        verticalAlignment: Text.AlignVCenter
+                        text: "Search apps…"
+                        color: root.textMuted
+                        font.pixelSize: 14
+                        visible: !searchField.text && !searchField.activeFocus
+                        opacity: 0.7
+                    }
+                }
+
+                ListView {
+                    id: appList
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    contentWidth: width
-                    contentHeight: gridColumn.height
                     clip: true
+                    model: root.filteredApps
+                    spacing: 2
+                    currentIndex: root.selectedIndex
                     boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: ScrollBar {
                         policy: ScrollBar.AsNeeded
                         width: 6
                     }
 
-                    ColumnLayout {
-                        id: gridColumn
-                        width: flick.width
-                        spacing: 22
+                    delegate: Rectangle {
+                        width: appList.width
+                        height: 44
+                        radius: 8
+                        color: {
+                            if (index === root.selectedIndex) return Qt.rgba(0.49, 0.42, 0.97, 0.18)
+                            if (rowMa.containsMouse) return root.hoverBg
+                            return "transparent"
+                        }
+                        border.color: index === root.selectedIndex ? root.accent : "transparent"
+                        border.width: index === root.selectedIndex ? 1 : 0
 
                         RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 20
-                            Layout.alignment: Qt.AlignTop
+                            anchors.fill: parent
+                            anchors.leftMargin: 10
+                            anchors.rightMargin: 10
+                            spacing: 10
 
-                            CategoryBlock {
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: 2
-                                title: "Inspiration"
-                                tools: root.categories[0].tools
-                                columns: 2
+                            Item {
+                                Layout.preferredWidth: 28
+                                Layout.preferredHeight: 28
+                                Layout.alignment: Qt.AlignVCenter
+
+                                Image {
+                                    anchors.fill: parent
+                                    source: {
+                                        if (!root.appLibrary || !modelData.icon) return ""
+                                        if (typeof root.appLibrary.iconSource === "function")
+                                            return root.appLibrary.iconSource(modelData.icon)
+                                        return ""
+                                    }
+                                    fillMode: Image.PreserveAspectFit
+                                    smooth: true
+                                    asynchronous: true
+                                    visible: status === Image.Ready
+                                }
+
+                                Rectangle {
+                                    anchors.fill: parent
+                                    radius: 6
+                                    color: root.hoverBg
+                                    visible: parent.children[0].status !== Image.Ready
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: (modelData.name || "?").charAt(0).toUpperCase()
+                                        color: root.textMuted
+                                        font.pixelSize: 13
+                                        font.weight: Font.DemiBold
+                                    }
+                                }
                             }
 
-                            CategoryBlock {
+                            ColumnLayout {
                                 Layout.fillWidth: true
-                                Layout.preferredWidth: 1
-                                title: "AI Code"
-                                tools: root.categories[1].tools
-                                columns: 1
-                            }
+                                spacing: 1
 
-                            CategoryBlock {
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: 1
-                                title: "Components"
-                                tools: root.categories[2].tools
-                                columns: 1
+                                Text {
+                                    text: modelData.name || modelData.appId
+                                    color: root.textPrimary
+                                    font.pixelSize: 13
+                                    font.family: "Inter, system-ui, sans-serif"
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
+                                Text {
+                                    visible: !!(modelData.subtext)
+                                    text: modelData.subtext || ""
+                                    color: root.textMuted
+                                    font.pixelSize: 11
+                                    font.family: "Inter, system-ui, sans-serif"
+                                    elide: Text.ElideRight
+                                    Layout.fillWidth: true
+                                }
                             }
                         }
 
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 20
-                            Layout.alignment: Qt.AlignTop
-
-                            CategoryBlock {
-                                Layout.fillWidth: true
-                                title: "Web Utility"
-                                tools: root.categories[3].tools
-                                columns: 1
+                        MouseArea {
+                            id: rowMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.selectedIndex = index
+                                root.launchAt(index)
                             }
-                            CategoryBlock {
-                                Layout.fillWidth: true
-                                title: "Desktop Utility"
-                                tools: root.categories[4].tools
-                                columns: 1
-                            }
-                            CategoryBlock {
-                                Layout.fillWidth: true
-                                title: "Video & Capture"
-                                tools: root.categories[5].tools
-                                columns: 1
-                            }
-                            CategoryBlock {
-                                Layout.fillWidth: true
-                                title: "Whiteboard"
-                                tools: root.categories[6].tools
-                                columns: 1
+                            onContainsMouseChanged: {
+                                if (containsMouse) root.selectedIndex = index
                             }
                         }
                     }
@@ -244,11 +338,11 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Esc to close  ·  Native apps via uwsm-app / gtk-launch"
+                    text: "↑↓ navigate  ·  Enter launch  ·  Esc close"
                     color: root.textMuted
                     font.pixelSize: 11
                     horizontalAlignment: Text.AlignHCenter
-                    opacity: 0.7
+                    opacity: 0.65
                 }
             }
         }
@@ -256,100 +350,22 @@ Item {
         Item {
             id: keyCatcher
             anchors.fill: parent
-            focus: root.opened
+            focus: root.opened && !searchField.activeFocus
             Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Escape) {
                     root.dismiss()
                     event.accepted = true
+                } else if (event.key === Qt.Key_Down) {
+                    root.moveSelection(1)
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Up) {
+                    root.moveSelection(-1)
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                    root.launchAt(root.selectedIndex)
+                    event.accepted = true
                 }
             }
-        }
-    }
-
-    component CategoryBlock: ColumnLayout {
-        id: catRoot
-        property string title: ""
-        property var tools: []
-        property int columns: 1
-        spacing: 8
-
-        Text {
-            text: catRoot.title
-            color: root.textPrimary
-            font.pixelSize: 13
-            font.weight: Font.DemiBold
-            font.family: "Inter, system-ui, sans-serif"
-            Layout.bottomMargin: 2
-        }
-
-        Flow {
-            Layout.fillWidth: true
-            spacing: 2
-            flow: Flow.TopToBottom
-            height: Math.ceil(catRoot.tools.length / Math.max(1, catRoot.columns)) * 26
-
-            Repeater {
-                model: catRoot.tools
-
-                Rectangle {
-                    width: catRoot.columns > 1
-                           ? (catRoot.width - 8) / catRoot.columns
-                           : catRoot.width
-                    height: 24
-                    radius: 6
-                    color: toolMa.containsMouse ? root.hoverBg : "transparent"
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 6
-                        anchors.rightMargin: 6
-                        spacing: 6
-
-                        Rectangle {
-                            width: 6
-                            height: 6
-                            radius: 3
-                            color: accentFor(index)
-                            Layout.alignment: Qt.AlignVCenter
-                        }
-
-                        Text {
-                            text: modelData.name
-                            color: toolMa.containsMouse ? root.textPrimary : root.textMuted
-                            font.pixelSize: 12
-                            font.family: "Inter, system-ui, sans-serif"
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                        }
-
-                        Text {
-                            visible: !!(modelData.desktop || modelData.exec)
-                            text: "⌘"
-                            color: root.accent
-                            font.pixelSize: 10
-                            opacity: 0.6
-                            Layout.alignment: Qt.AlignVCenter
-                        }
-                    }
-
-                    MouseArea {
-                        id: toolMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.launchTool(modelData)
-                    }
-                }
-            }
-        }
-
-        function accentFor(i) {
-            var palette = [
-                "#60a5fa", "#a78bfa", "#f472b6", "#34d399",
-                "#fbbf24", "#fb7185", "#22d3ee", "#c084fc",
-                "#4ade80", "#f97316"
-            ]
-            return palette[i % palette.length]
         }
     }
 }
