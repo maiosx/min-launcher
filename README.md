@@ -1,8 +1,10 @@
 # Min Launcher
 
-Fullscreen **native app launcher** overlay for [Omarchy](https://omarchy.org) (Quickshell).
+Fullscreen app launcher overlay for [Omarchy](https://omarchy.org) (Quickshell).
 
-Lists **installed applications only** — the same `.desktop` entries Omarchy’s menu Apps section uses via `shell.appLibrary`. No web URLs.
+**Layout** matches the Design Engineer Tools multi-column card. **Items** are your installed native apps only (Omarchy `AppLibrary` / `.desktop` entries) — no web URLs.
+
+Apps are grouped by FreeDesktop category (Development, Graphics, Internet, Office, Multimedia, System, Utility, Games, Apps).
 
 ## Install
 
@@ -30,21 +32,16 @@ o.bind("SUPER + SHIFT + L", "Min Launcher", "omarchy-shell shell toggle min-laun
 
 ## Usage
 
-- Type to filter by name / keywords
-- **↑↓** or mouse to select
-- **Enter** or click to launch via `AppLibrary.launch` (uwsm-app / gtk-launch)
-- **Esc** closes (or clears the search first)
-
-## How it works
-
-Apps come from Omarchy’s shared `AppLibrary` (DesktopEntries), identical to the built-in menu’s Apps provider. Launch uses `appLibrary.launch(appId, name)` so session wrapping and launch feedback match the rest of the shell.
+- Type to filter across all sections
+- Click an app or **Enter** to launch via `AppLibrary.launch`
+- **↑↓** move selection · **Esc** clear filter / close
 
 ## Structure
 
 ```
-manifest.json   Omarchy overlay plugin manifest
-Launcher.qml    Fullscreen overlay UI
-Tools.js        App list / filter helpers
+manifest.json
+Launcher.qml    Design Engineer–style multi-column overlay
+Tools.js        AppLibrary list, filter, category grouping
 README.md
 LICENSE
 ```
