@@ -2,11 +2,9 @@
 <img width="1366" height="768" alt="Preview" src="Preview.png" />
 Fullscreen app launcher overlay for [Omarchy](https://omarchy.org) (Quickshell).
 
-**Layout** inspired by Design Engineer Tools. **Items** are your installed native apps only (Omarchy `AppLibrary` / `.desktop` entries) — no web URLs.
+**Layout** inspired by Design Engineer Tools. **Items** are installed native apps (Omarchy `AppLibrary`) plus a curated **Web Apps** section that opens in the browser.
 
-Apps are grouped by FreeDesktop category (Development, Graphics, Internet, Office, Multimedia, System, Utility, Games, Apps).
-
-
+Native apps are grouped by FreeDesktop category (Development, Graphics, Internet, Office, Multimedia, System, Utility, Games, Apps). Browser tools appear under **Web Apps**.
 
 ## Install
 
@@ -35,8 +33,10 @@ o.bind("SUPER + M", "Min Launcher", "omarchy-shell shell toggle min-launcher")
 ## Usage
 
 - Type to filter across all sections
-- Click an app or **Enter** to launch via `AppLibrary.launch`
+- Click an app or **Enter** to launch (native via `AppLibrary.launch`, web via browser)
 - **↑↓** move selection · **Esc** clear filter / close
+
+Edit the `WEB_APPS` list in `Tools.js` to add or remove browser tools.
 
 ## Remove
 
@@ -47,7 +47,7 @@ omarchy plugin disable min-launcher
 omarchy plugin remove min-launcher
 ```
 
-If you added a keybind, delete the `SUPER + SHIFT + L` line (or whatever binding you used) from `~/.config/hypr/bindings.lua`.
+If you added a keybind, delete it from `~/.config/hypr/bindings.lua`.
 
 To wipe any leftover config under your home directory:
 
@@ -62,7 +62,7 @@ rm -rf ~/.config/omarchy/plugins/min-launcher
 ```
 manifest.json
 Launcher.qml    Fullscreen multi-column overlay
-Tools.js        AppLibrary list, filter, category grouping
+Tools.js        AppLibrary list, Web Apps, filter, category grouping
 Preview.png     Screenshot
 README.md
 LICENSE
