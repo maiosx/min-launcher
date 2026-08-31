@@ -35,8 +35,10 @@ o.bind("SUPER + M", "Min Launcher", "omarchy-shell shell toggle min-launcher")
 - Type to filter across all sections
 - Click an app or **Enter** to launch (native via `AppLibrary.launch`, web via browser)
 - **↑↓** move selection · **Esc** clear filter / close
+- Use the **+** button (bottom right) to add a web app (title + URL)
+- Use the **−** next to a web app to remove it
 
-Edit the `WEB_APPS` list in `Tools.js` to add or remove browser tools.
+Custom web apps are saved to `~/.config/omarchy/min-launcher-web-apps.json`.
 
 ## Remove
 
@@ -53,6 +55,7 @@ To wipe any leftover config under your home directory:
 
 ```bash
 rm -rf ~/.config/omarchy/plugins/min-launcher
+rm -f ~/.config/omarchy/min-launcher-web-apps.json
 ```
 
 (Paths may vary slightly by Omarchy version; `omarchy plugin list` shows installed plugins.)
