@@ -1,5 +1,5 @@
 # Min Launcher
-<img width="1366" height="768" alt="Preview" src="https://github.com/user-attachments/assets/d0dc2905-8cfa-4a51-8ee4-dafdd26996c1" />
+<img width="1366" height="768" alt="Preview" src="Preview.png" />
 Fullscreen app launcher overlay for [Omarchy](https://omarchy.org) (Quickshell).
 
 **Layout** inspired by Design Engineer Tools. **Items** are your installed native apps only (Omarchy `AppLibrary` / `.desktop` entries) — no web URLs.
