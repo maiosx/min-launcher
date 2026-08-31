@@ -1,5 +1,5 @@
-// App list helpers: native AppLibrary apps + curated Web Apps section.
-// Web Apps open in the browser; everything else launches natively.
+// App list helpers: native AppLibrary apps + editable Web Apps section.
+// Web Apps open in the browser; list is persisted under ~/.config/omarchy/.
 
 .pragma library
 
@@ -40,7 +40,6 @@ function entryCategories(entry) {
   return []
 }
 
-// FreeDesktop category → section title
 var CATEGORY_MAP = [
   { title: "Development", keys: ["Development", "IDE", "TextEditor", "Debugger", "GUIDesigner", "WebDevelopment"] },
   { title: "Graphics", keys: ["Graphics", "2DGraphics", "3DGraphics", "RasterGraphics", "VectorGraphics", "Photography"] },
@@ -52,8 +51,7 @@ var CATEGORY_MAP = [
   { title: "Games", keys: ["Game", "ActionGame", "AdventureGame", "ArcadeGame", "BoardGame", "CardGame", "LogicGame", "RolePlaying", "Simulation", "SportsGame", "StrategyGame"] }
 ]
 
-// Curated browser-based tools shown under "Web Apps"
-var WEB_APPS = [
+var DEFAULT_WEB_APPS = [
   { name: "60fps", url: "https://60fps.design/" },
   { name: "Awwwards", url: "https://www.awwwards.com/" },
   { name: "Bolt.new", url: "https://bolt.new/" },
@@ -76,6 +74,10 @@ var WEB_APPS = [
   { name: "Notion", url: "https://www.notion.so/" }
 ]
 
+function slugify(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"
+}
+
 function sectionForCategories(cats) {
   for (var i = 0; i < CATEGORY_MAP.length; i++) {
     var section = CATEGORY_MAP[i]
@@ -88,53 +90,103 @@ function sectionForCategories(cats) {
   return "Apps"
 }
 
-function buildWebAppList() {
+function normalizeWebItem(raw) {
+  if (!raw || typeof raw !== "object") return null
+  var name = String(raw.name || "").trim()
+  var url = String(raw.url || "").trim()
+  if (!name || !url) return null
+  if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0)
+    url = "https://" + url
+  return {
+    appId: "web." + slugify(name),
+    name: name,
+    subtext: "Web",
+    icon: "",
+    url: url,
+    isWeb: true,
+    section: "Web Apps"
+  }
+}
+
+function defaultWebApps() {
   var out = []
-  for (var i = 0; i < WEB_APPS.length; i++) {
-    var w = WEB_APPS[i]
-    if (!w || !w.name || !w.url) continue
+  for (var i = 0; i < DEFAULT_WEB_APPS.length; i++) {
+    var item = normalizeWebItem(DEFAULT_WEB_APPS[i])
+    if (item) out.push(item)
+  }
+  return out
+}
+
+function parseWebAppsJson(raw) {
+  var text = String(raw || "").trim()
+  if (!text) return null
+  try {
+    var parsed = JSON.parse(text)
+    var source = Array.isArray(parsed) ? parsed
+               : (parsed && Array.isArray(parsed.items) ? parsed.items : null)
+    if (!source) return null
+    var out = []
+    var seen = ({})
+    for (var i = 0; i < source.length; i++) {
+      var item = normalizeWebItem(source[i])
+      if (!item || seen[item.appId]) continue
+      seen[item.appId] = true
+      out.push(item)
+    }
+    return out
+  } catch (e) {
+    return null
+  }
+}
+
+function serializeWebApps(list) {
+  var items = []
+  var arr = list || []
+  for (var i = 0; i < arr.length; i++) {
+    var a = arr[i]
+    if (!a || !a.name || !a.url) continue
+    items.push({ name: a.name, url: a.url })
+  }
+  return JSON.stringify({ items: items }, null, 2)
+}
+
+function webAppsConfigPath() {
+  return "\"$HOME/.config/omarchy/min-launcher-web-apps.json\""
+}
+
+function buildNativeAppList(appLibrary) {
+  var out = []
+  if (!appLibrary || typeof appLibrary.sortedEntries !== "function")
+    return out
+
+  var rows = []
+  try { rows = appLibrary.sortedEntries("") || [] } catch (e) { return out }
+
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i]
+    var entry = row && row.entry ? row.entry : row
+    if (!entry) continue
+    var appId = entryId(entry)
+    if (!appId) continue
+    var cats = entryCategories(entry)
     out.push({
-      appId: "web." + String(w.name).toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-      name: w.name,
-      subtext: "Web",
-      icon: "",
-      url: w.url,
-      isWeb: true,
-      section: "Web Apps"
+      appId: appId,
+      name: entryName(appLibrary, entry),
+      subtext: entrySubtext(appLibrary, entry),
+      icon: entryIcon(entry),
+      url: "",
+      isWeb: false,
+      section: sectionForCategories(cats)
     })
   }
   return out
 }
 
-function buildAppList(appLibrary) {
-  var out = []
-  if (appLibrary && typeof appLibrary.sortedEntries === "function") {
-    var rows = []
-    try { rows = appLibrary.sortedEntries("") || [] } catch (e) { rows = [] }
-
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i]
-      var entry = row && row.entry ? row.entry : row
-      if (!entry) continue
-      var appId = entryId(entry)
-      if (!appId) continue
-      var cats = entryCategories(entry)
-      out.push({
-        appId: appId,
-        name: entryName(appLibrary, entry),
-        subtext: entrySubtext(appLibrary, entry),
-        icon: entryIcon(entry),
-        url: "",
-        isWeb: false,
-        section: sectionForCategories(cats)
-      })
-    }
-  }
-
-  var web = buildWebAppList()
+function buildAppList(appLibrary, webApps) {
+  var out = buildNativeAppList(appLibrary)
+  var web = webApps && webApps.length ? webApps : defaultWebApps()
   for (var j = 0; j < web.length; j++)
     out.push(web[j])
-
   return out
 }
 
@@ -183,4 +235,31 @@ function buildSections(apps) {
       sections.push({ title: key, tools: buckets[key] })
   }
   return sections
+}
+
+function removeWebApp(list, appId) {
+  var out = []
+  var arr = list || []
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i] && arr[i].appId !== appId)
+      out.push(arr[i])
+  }
+  return out
+}
+
+function addWebApp(list, name, url) {
+  var item = normalizeWebItem({ name: name, url: url })
+  if (!item) return list || []
+  var out = []
+  var arr = list || []
+  for (var i = 0; i < arr.length; i++) {
+    if (arr[i] && arr[i].appId === item.appId) continue
+    out.push(arr[i])
+  }
+  out.push(item)
+  return out
+}
+
+function shellQuote(value) {
+  return "'" + String(value || "").replace(/'/g, "'\\''") + "'"
 }
