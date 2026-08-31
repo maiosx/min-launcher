@@ -1,12 +1,12 @@
 # Min Launcher
-
+<img width="1366" height="768" alt="Preview" src="https://github.com/user-attachments/assets/d0dc2905-8cfa-4a51-8ee4-dafdd26996c1" />
 Fullscreen app launcher overlay for [Omarchy](https://omarchy.org) (Quickshell).
 
 **Layout** inspired by Design Engineer Tools. **Items** are your installed native apps only (Omarchy `AppLibrary` / `.desktop` entries) — no web URLs.
 
 Apps are grouped by FreeDesktop category (Development, Graphics, Internet, Office, Multimedia, System, Utility, Games, Apps).
 
-![Preview](Preview.png)
+
 
 ## Install
 
@@ -29,7 +29,7 @@ omarchy-shell shell toggle min-launcher
 Suggested keybind in `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + SHIFT + L", "Min Launcher", "omarchy-shell shell toggle min-launcher")
+o.bind("SUPER + M", "Min Launcher", "omarchy-shell shell toggle min-launcher")
 ```
 
 ## Usage
