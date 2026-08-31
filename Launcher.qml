@@ -71,7 +71,16 @@ Item {
     }
 
     function launchApp(app) {
-        if (!app || !app.appId) return
+        if (!app) return
+
+        // Web Apps → open in default browser
+        if (app.isWeb || (app.url && String(app.url).length > 0)) {
+            Qt.openUrlExternally(String(app.url))
+            dismiss()
+            return
+        }
+
+        if (!app.appId) return
         if (root.appLibrary && typeof root.appLibrary.launch === "function") {
             root.appLibrary.launch(app.appId, app.name || app.appId)
         } else {
