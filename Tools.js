@@ -1,6 +1,5 @@
-// Native-only helpers: group installed AppLibrary apps for the
-// Design Engineer Tools–style multi-column layout.
-// No web URLs.
+// App list helpers: native AppLibrary apps + curated Web Apps section.
+// Web Apps open in the browser; everything else launches natively.
 
 .pragma library
 
@@ -41,7 +40,7 @@ function entryCategories(entry) {
   return []
 }
 
-// Map FreeDesktop category tokens → display section titles (layout columns).
+// FreeDesktop category → section title
 var CATEGORY_MAP = [
   { title: "Development", keys: ["Development", "IDE", "TextEditor", "Debugger", "GUIDesigner", "WebDevelopment"] },
   { title: "Graphics", keys: ["Graphics", "2DGraphics", "3DGraphics", "RasterGraphics", "VectorGraphics", "Photography"] },
@@ -51,6 +50,30 @@ var CATEGORY_MAP = [
   { title: "System", keys: ["System", "Settings", "Monitor", "TerminalEmulator", "Filesystem", "Security"] },
   { title: "Utility", keys: ["Utility", "Accessibility", "Archiving", "Compression", "FileTools", "TextTools", "Calculator"] },
   { title: "Games", keys: ["Game", "ActionGame", "AdventureGame", "ArcadeGame", "BoardGame", "CardGame", "LogicGame", "RolePlaying", "Simulation", "SportsGame", "StrategyGame"] }
+]
+
+// Curated browser-based tools shown under "Web Apps"
+var WEB_APPS = [
+  { name: "60fps", url: "https://60fps.design/" },
+  { name: "Awwwards", url: "https://www.awwwards.com/" },
+  { name: "Bolt.new", url: "https://bolt.new/" },
+  { name: "Claude", url: "https://claude.ai/" },
+  { name: "Color.review", url: "https://color.review/" },
+  { name: "Cosmos", url: "https://www.cosmos.so/" },
+  { name: "Excalidraw", url: "https://excalidraw.com/" },
+  { name: "FigJam", url: "https://www.figma.com/figjam/" },
+  { name: "Godly", url: "https://godly.website/" },
+  { name: "Mobbin", url: "https://mobbin.com/" },
+  { name: "Miro", url: "https://miro.com/" },
+  { name: "Motion Primitives", url: "https://motion-primitives.com/" },
+  { name: "Pinterest", url: "https://www.pinterest.com/" },
+  { name: "React Bits", url: "https://www.reactbits.dev/" },
+  { name: "shadcn/ui", url: "https://ui.shadcn.com/" },
+  { name: "v0 by Vercel", url: "https://v0.dev/" },
+  { name: "21st.dev", url: "https://21st.dev/" },
+  { name: "ChatGPT", url: "https://chatgpt.com/" },
+  { name: "Linear", url: "https://linear.app/" },
+  { name: "Notion", url: "https://www.notion.so/" }
 ]
 
 function sectionForCategories(cats) {
@@ -65,29 +88,53 @@ function sectionForCategories(cats) {
   return "Apps"
 }
 
-function buildAppList(appLibrary) {
+function buildWebAppList() {
   var out = []
-  if (!appLibrary || typeof appLibrary.sortedEntries !== "function")
-    return out
-
-  var rows = []
-  try { rows = appLibrary.sortedEntries("") || [] } catch (e) { return out }
-
-  for (var i = 0; i < rows.length; i++) {
-    var row = rows[i]
-    var entry = row && row.entry ? row.entry : row
-    if (!entry) continue
-    var appId = entryId(entry)
-    if (!appId) continue
-    var cats = entryCategories(entry)
+  for (var i = 0; i < WEB_APPS.length; i++) {
+    var w = WEB_APPS[i]
+    if (!w || !w.name || !w.url) continue
     out.push({
-      appId: appId,
-      name: entryName(appLibrary, entry),
-      subtext: entrySubtext(appLibrary, entry),
-      icon: entryIcon(entry),
-      section: sectionForCategories(cats)
+      appId: "web." + String(w.name).toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      name: w.name,
+      subtext: "Web",
+      icon: "",
+      url: w.url,
+      isWeb: true,
+      section: "Web Apps"
     })
   }
+  return out
+}
+
+function buildAppList(appLibrary) {
+  var out = []
+  if (appLibrary && typeof appLibrary.sortedEntries === "function") {
+    var rows = []
+    try { rows = appLibrary.sortedEntries("") || [] } catch (e) { rows = [] }
+
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
+      var entry = row && row.entry ? row.entry : row
+      if (!entry) continue
+      var appId = entryId(entry)
+      if (!appId) continue
+      var cats = entryCategories(entry)
+      out.push({
+        appId: appId,
+        name: entryName(appLibrary, entry),
+        subtext: entrySubtext(appLibrary, entry),
+        icon: entryIcon(entry),
+        url: "",
+        isWeb: false,
+        section: sectionForCategories(cats)
+      })
+    }
+  }
+
+  var web = buildWebAppList()
+  for (var j = 0; j < web.length; j++)
+    out.push(web[j])
+
   return out
 }
 
@@ -101,7 +148,7 @@ function filterApps(apps, query) {
   var matched = []
   for (var i = 0; i < list.length; i++) {
     var a = list[i]
-    var hay = (String(a.name || "") + " " + String(a.subtext || "") + " " + String(a.appId || "") + " " + String(a.section || "")).toLowerCase()
+    var hay = (String(a.name || "") + " " + String(a.subtext || "") + " " + String(a.appId || "") + " " + String(a.section || "") + " " + String(a.url || "")).toLowerCase()
     var ok = true
     for (var t = 0; t < tokens.length; t++) {
       if (hay.indexOf(tokens[t]) < 0) { ok = false; break }
@@ -111,9 +158,8 @@ function filterApps(apps, query) {
   return matched
 }
 
-// Group filtered apps into ordered sections for the multi-column layout.
 function buildSections(apps) {
-  var order = ["Development", "Graphics", "Internet", "Office", "Multimedia", "System", "Utility", "Games", "Apps"]
+  var order = ["Development", "Graphics", "Internet", "Office", "Multimedia", "System", "Utility", "Games", "Apps", "Web Apps"]
   var buckets = ({})
   for (var o = 0; o < order.length; o++) buckets[order[o]] = []
 
