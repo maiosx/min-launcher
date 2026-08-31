@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "min-launcher",
+  "name": "Min Launcher",
+  "version": "1.0.0",
+  "author": "maiosx",
+  "license": "MIT",
+  "description": "Fullscreen Design Engineer Tools overlay launcher for Omarchy — curated inspiration, AI code, components, utilities, and more.",
+  "homepage": "https://github.com/maiosx/min-launcher",
+  "kinds": ["overlay"],
+  "activation": "on-demand",
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Launcher.qml"
+  }
+}
