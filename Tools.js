@@ -1,5 +1,11 @@
-// Curated Design Engineer Tools — mirrors the classic designengineer.tools layout
-// Each entry: { name, url, icon? }
+// Curated Design Engineer Tools
+// Prefer native apps when installed (desktop / exec), else open url in browser.
+//
+// Fields:
+//   name     — display label
+//   desktop  — gtk-launch id without .desktop (preferred on Omarchy)
+//   exec     — raw command if no desktop entry (still wrapped in uwsm-app)
+//   url      — fallback web URL
 
 .pragma library
 
@@ -37,15 +43,15 @@ var categories = [
     columns: 1,
     tools: [
       { name: "Bolt.new", url: "https://bolt.new/" },
-      { name: "Claude Code", url: "https://claude.ai/code" },
-      { name: "Cline", url: "https://github.com/cline/cline" },
-      { name: "Cursor", url: "https://cursor.com/" },
+      { name: "Claude Code", desktop: "claude", exec: "claude", url: "https://claude.ai/code" },
+      { name: "Cline", exec: "cline", url: "https://github.com/cline/cline" },
+      { name: "Cursor", desktop: "cursor", exec: "cursor", url: "https://cursor.com/" },
       { name: "Google Antigravity", url: "https://antigravity.google/" },
-      { name: "OpenAI Codex", url: "https://openai.com/codex/" },
+      { name: "OpenAI Codex", exec: "codex", url: "https://openai.com/codex/" },
       { name: "Skills", url: "https://skills.sh/" },
       { name: "v0 by Vercel", url: "https://v0.dev/" },
-      { name: "Windsurf", url: "https://codeium.com/windsurf" },
-      { name: "Zed", url: "https://zed.dev/" }
+      { name: "Windsurf", desktop: "windsurf", exec: "windsurf", url: "https://codeium.com/windsurf" },
+      { name: "Zed", desktop: "dev.zed.Zed", exec: "zed", url: "https://zed.dev/" }
     ]
   },
   {
@@ -77,20 +83,20 @@ var categories = [
     title: "Desktop Utility",
     columns: 1,
     tools: [
-      { name: "Claude Cowork", url: "https://claude.ai/" },
-      { name: "Granola", url: "https://www.granola.so/" },
-      { name: "LocalSend", url: "https://localsend.org/" },
-      { name: "Raycast", url: "https://www.raycast.com/" }
+      { name: "Claude Cowork", desktop: "claude", exec: "claude", url: "https://claude.ai/" },
+      { name: "Granola", desktop: "granola", exec: "granola", url: "https://www.granola.so/" },
+      { name: "LocalSend", desktop: "org.localsend.localsend_app", exec: "localsend", url: "https://localsend.org/" },
+      { name: "Raycast", desktop: "raycast", exec: "raycast", url: "https://www.raycast.com/" }
     ]
   },
   {
     title: "Video & Capture",
     columns: 1,
     tools: [
-      { name: "LosslessCut", url: "https://github.com/mifi/lossless-cut" },
-      { name: "NVIDIA ShadowPlay", url: "https://www.nvidia.com/en-us/geforce/geforce-experience/shadowplay/" },
-      { name: "OBS Studio", url: "https://obsproject.com/" },
-      { name: "Parsec", url: "https://parsec.app/" }
+      { name: "LosslessCut", desktop: "no.mifi.losslesscut", exec: "losslesscut", url: "https://github.com/mifi/lossless-cut" },
+      { name: "NVIDIA ShadowPlay", desktop: "nvidia-settings", exec: "nvidia-settings", url: "https://www.nvidia.com/en-us/geforce/geforce-experience/shadowplay/" },
+      { name: "OBS Studio", desktop: "com.obsproject.Studio", exec: "obs", url: "https://obsproject.com/" },
+      { name: "Parsec", desktop: "parsecd", exec: "parsecd", url: "https://parsec.app/" }
     ]
   },
   {
@@ -100,7 +106,7 @@ var categories = [
       { name: "Excalidraw", url: "https://excalidraw.com/" },
       { name: "FigJam", url: "https://www.figma.com/figjam/" },
       { name: "Miro", url: "https://miro.com/" },
-      { name: "Muse", url: "https://museapp.com/" }
+      { name: "Muse", desktop: "muse", exec: "muse", url: "https://museapp.com/" }
     ]
   }
 ]
@@ -110,9 +116,12 @@ function flatTools() {
   for (var i = 0; i < categories.length; i++) {
     var cat = categories[i]
     for (var j = 0; j < cat.tools.length; j++) {
+      var t = cat.tools[j]
       list.push({
-        name: cat.tools[j].name,
-        url: cat.tools[j].url,
+        name: t.name,
+        url: t.url || "",
+        desktop: t.desktop || "",
+        exec: t.exec || "",
         category: cat.title
       })
     }
