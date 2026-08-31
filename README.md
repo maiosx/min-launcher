@@ -1,8 +1,8 @@
 # Min Launcher
 
-Fullscreen **Design Engineer Tools** overlay for [Omarchy](https://omarchy.org) (Quickshell).
+Fullscreen **native app launcher** overlay for [Omarchy](https://omarchy.org) (Quickshell).
 
-Curated launcher inspired by [designengineer.tools](https://designengineer.tools). **Native apps** (Cursor, Zed, OBS, LocalSend, …) launch via `uwsm-app` / `gtk-launch` when installed; everything else opens in the browser.
+Lists **installed applications only** — the same `.desktop` entries Omarchy’s menu Apps section uses via `shell.appLibrary`. No web URLs.
 
 ## Install
 
@@ -10,7 +10,7 @@ Curated launcher inspired by [designengineer.tools](https://designengineer.tools
 omarchy plugin add https://github.com/maiosx/min-launcher.git --enable
 ```
 
-Or update an existing install:
+Update:
 
 ```bash
 omarchy plugin update min-launcher
@@ -28,30 +28,23 @@ Suggested keybind in `~/.config/hypr/bindings.lua`:
 o.bind("SUPER + SHIFT + L", "Min Launcher", "omarchy-shell shell toggle min-launcher")
 ```
 
-## Launch order
+## Usage
 
-For each tool the overlay tries, in order:
+- Type to filter by name / keywords
+- **↑↓** or mouse to select
+- **Enter** or click to launch via `AppLibrary.launch` (uwsm-app / gtk-launch)
+- **Esc** closes (or clears the search first)
 
-1. **Desktop entry** — `uwsm-app -- gtk-launch <id>.desktop` (Omarchy session wrapper)
-2. **Exec command** — same wrapper around the binary name
-3. **URL** — `Qt.openUrlExternally` in the default browser
+## How it works
 
-Tools that can run natively show a small ⌘ mark in the list.
-
-## Customize
-
-Edit `Tools.js` in the plugin directory (or fork the repo) to add/remove tools or change desktop IDs / exec names for your install.
-
-```js
-{ name: "Cursor", desktop: "cursor", exec: "cursor", url: "https://cursor.com/" }
-```
+Apps come from Omarchy’s shared `AppLibrary` (DesktopEntries), identical to the built-in menu’s Apps provider. Launch uses `appLibrary.launch(appId, name)` so session wrapping and launch feedback match the rest of the shell.
 
 ## Structure
 
 ```
-manifest.json   Omarchy plugin manifest (kind: overlay)
-Launcher.qml    Fullscreen overlay + launch logic
-Tools.js        Categories, desktop IDs, exec names, URLs
+manifest.json   Omarchy overlay plugin manifest
+Launcher.qml    Fullscreen overlay UI
+Tools.js        App list / filter helpers
 README.md
 LICENSE
 ```
