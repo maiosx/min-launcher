@@ -51,28 +51,8 @@ var CATEGORY_MAP = [
   { title: "Games", keys: ["Game", "ActionGame", "AdventureGame", "ArcadeGame", "BoardGame", "CardGame", "LogicGame", "RolePlaying", "Simulation", "SportsGame", "StrategyGame"] }
 ]
 
-var DEFAULT_WEB_APPS = [
-  { name: "60fps", url: "https://60fps.design/" },
-  { name: "Awwwards", url: "https://www.awwwards.com/" },
-  { name: "Bolt.new", url: "https://bolt.new/" },
-  { name: "Claude", url: "https://claude.ai/" },
-  { name: "Color.review", url: "https://color.review/" },
-  { name: "Cosmos", url: "https://www.cosmos.so/" },
-  { name: "Excalidraw", url: "https://excalidraw.com/" },
-  { name: "FigJam", url: "https://www.figma.com/figjam/" },
-  { name: "Godly", url: "https://godly.website/" },
-  { name: "Mobbin", url: "https://mobbin.com/" },
-  { name: "Miro", url: "https://miro.com/" },
-  { name: "Motion Primitives", url: "https://motion-primitives.com/" },
-  { name: "Pinterest", url: "https://www.pinterest.com/" },
-  { name: "React Bits", url: "https://www.reactbits.dev/" },
-  { name: "shadcn/ui", url: "https://ui.shadcn.com/" },
-  { name: "v0 by Vercel", url: "https://v0.dev/" },
-  { name: "21st.dev", url: "https://21st.dev/" },
-  { name: "ChatGPT", url: "https://chatgpt.com/" },
-  { name: "Linear", url: "https://linear.app/" },
-  { name: "Notion", url: "https://www.notion.so/" }
-]
+// Default browser tools (used when no user file exists yet)
+var DEFAULT_WEB_APPS = []
 
 function slugify(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"
@@ -184,7 +164,7 @@ function buildNativeAppList(appLibrary) {
 
 function buildAppList(appLibrary, webApps) {
   var out = buildNativeAppList(appLibrary)
-  var web = webApps && webApps.length ? webApps : defaultWebApps()
+  var web = Array.isArray(webApps) ? webApps : defaultWebApps()
   for (var j = 0; j < web.length; j++)
     out.push(web[j])
   return out
