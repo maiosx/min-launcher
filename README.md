@@ -2,12 +2,18 @@
 
 Fullscreen **Design Engineer Tools** overlay for [Omarchy](https://omarchy.org) (Quickshell).
 
-A dark, curated launcher inspired by [designengineer.tools](https://designengineer.tools) — inspiration sites, AI coding tools, component libraries, web/desktop utilities, video capture, and whiteboards — opened as a single fullscreen overlay.
+Curated launcher inspired by [designengineer.tools](https://designengineer.tools). **Native apps** (Cursor, Zed, OBS, LocalSend, …) launch via `uwsm-app` / `gtk-launch` when installed; everything else opens in the browser.
 
 ## Install
 
 ```bash
 omarchy plugin add https://github.com/maiosx/min-launcher.git --enable
+```
+
+Or update an existing install:
+
+```bash
+omarchy plugin update min-launcher
 ```
 
 ## Summon
@@ -22,17 +28,30 @@ Suggested keybind in `~/.config/hypr/bindings.lua`:
 o.bind("SUPER + SHIFT + L", "Min Launcher", "omarchy-shell shell toggle min-launcher")
 ```
 
-## Usage
+## Launch order
 
-- **Click** a tool to open its URL in your default browser and dismiss the overlay
-- **Esc** or click the dimmed backdrop to close
+For each tool the overlay tries, in order:
+
+1. **Desktop entry** — `uwsm-app -- gtk-launch <id>.desktop` (Omarchy session wrapper)
+2. **Exec command** — same wrapper around the binary name
+3. **URL** — `Qt.openUrlExternally` in the default browser
+
+Tools that can run natively show a small ⌘ mark in the list.
+
+## Customize
+
+Edit `Tools.js` in the plugin directory (or fork the repo) to add/remove tools or change desktop IDs / exec names for your install.
+
+```js
+{ name: "Cursor", desktop: "cursor", exec: "cursor", url: "https://cursor.com/" }
+```
 
 ## Structure
 
 ```
 manifest.json   Omarchy plugin manifest (kind: overlay)
-Launcher.qml    Fullscreen overlay UI + launch logic
-Tools.js        Curated tool list with categories and URLs
+Launcher.qml    Fullscreen overlay + launch logic
+Tools.js        Categories, desktop IDs, exec names, URLs
 README.md
 LICENSE
 ```
