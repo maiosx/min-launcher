@@ -53,6 +53,10 @@ var CATEGORY_MAP = [
 
 // Default browser tools (used when no user file exists yet)
 var DEFAULT_WEB_APPS = []
+var MAX_CONFIG_BYTES = 64 * 1024
+var MAX_WEB_ITEMS = 100
+var MAX_NAME_LENGTH = 128
+var MAX_URL_LENGTH = 2048
 
 function slugify(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"
@@ -72,8 +76,11 @@ function sectionForCategories(cats) {
 
 function normalizeWebItem(raw) {
   if (!raw || typeof raw !== "object") return null
-  var name = String(raw.name || "").trim()
-  var url = String(raw.url || "").trim()
+  var rawName = String(raw.name || "")
+  var rawUrl = String(raw.url || "")
+  if (rawName.length > MAX_NAME_LENGTH || rawUrl.length > MAX_URL_LENGTH) return null
+  var name = rawName.trim()
+  var url = rawUrl.trim()
   if (!name || !url) return null
   if (url.indexOf("http://") !== 0 && url.indexOf("https://") !== 0)
     url = "https://" + url
@@ -100,11 +107,13 @@ function defaultWebApps() {
 function parseWebAppsJson(raw) {
   var text = String(raw || "").trim()
   if (!text) return null
+  if (text.length > MAX_CONFIG_BYTES) return null
   try {
     var parsed = JSON.parse(text)
     var source = Array.isArray(parsed) ? parsed
                : (parsed && Array.isArray(parsed.items) ? parsed.items : null)
     if (!source) return null
+    if (source.length > MAX_WEB_ITEMS) return null
     var out = []
     var seen = ({})
     for (var i = 0; i < source.length; i++) {
@@ -122,7 +131,7 @@ function parseWebAppsJson(raw) {
 function serializeWebApps(list) {
   var items = []
   var arr = list || []
-  for (var i = 0; i < arr.length; i++) {
+  for (var i = 0; i < arr.length && items.length < MAX_WEB_ITEMS; i++) {
     var a = arr[i]
     if (!a || !a.name || !a.url) continue
     items.push({ name: a.name, url: a.url })
@@ -151,8 +160,8 @@ function buildNativeAppList(appLibrary) {
     var cats = entryCategories(entry)
     out.push({
       appId: appId,
-      name: entryName(appLibrary, entry),
-      subtext: entrySubtext(appLibrary, entry),
+      name: entryName(appLibrary, entry).slice(0, MAX_NAME_LENGTH),
+      subtext: entrySubtext(appLibrary, entry).slice(0, MAX_NAME_LENGTH),
       icon: entryIcon(entry),
       url: "",
       isWeb: false,
