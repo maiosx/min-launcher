@@ -87,7 +87,7 @@ Item {
     function loadWebApps() {
         loadProc.command = [
             "bash", "-c",
-            "if [ -f \"$HOME/.config/omarchy/min-launcher-web-apps.json\" ]; then cat \"$HOME/.config/omarchy/min-launcher-web-apps.json\"; fi"
+            "if [ -f \"$HOME/.config/omarchy/min-launcher-web-apps.json\" ]; then head -c 65536 \"$HOME/.config/omarchy/min-launcher-web-apps.json\"; fi"
         ]
         loadProc.running = true
     }
@@ -185,7 +185,10 @@ Item {
         id: loadProc
         property string collected: ""
         stdout: SplitParser {
-            onRead: function(data) { loadProc.collected += data }
+            onRead: function(data) {
+                if (loadProc.collected.length < 65536)
+                    loadProc.collected += data.slice(0, 65536 - loadProc.collected.length)
+            }
         }
         onExited: function(exitCode, exitStatus) {
             var parsed = Tools.parseWebAppsJson(loadProc.collected)
@@ -262,6 +265,7 @@ Item {
                     }
                     Text {
                         text: root.filteredApps.length + " items"
+                        textFormat: Text.PlainText
                         color: root.textMuted
                         font.pixelSize: 13
                         font.family: "Inter, system-ui, sans-serif"
@@ -351,6 +355,7 @@ Item {
                                     spacing: 8
                                     Text {
                                         text: modelData.title
+                                        textFormat: Text.PlainText
                                         color: root.textPrimary
                                         font.pixelSize: 13
                                         font.weight: Font.DemiBold
@@ -402,7 +407,8 @@ Item {
                                                         }
                                                     }
                                                     Text {
-                                                        text: modelData.name || modelData.appId
+                                                        text: String(modelData.name || modelData.appId).slice(0, 128)
+                                                        textFormat: Text.PlainText
                                                         color: {
                                                             var idx = root.flatIndexOf(modelData)
                                                             return (idx === root.selectedIndex || rowMa.containsMouse) ? root.textPrimary : root.textMuted
@@ -549,6 +555,7 @@ Item {
                                     color: root.textPrimary
                                     font.pixelSize: 13
                                     selectByMouse: true
+                                    maximumLength: 128
                                     text: root.addTitle
                                     onTextChanged: root.addTitle = text
                                     Keys.onPressed: function(event) {
@@ -579,6 +586,7 @@ Item {
                                     color: root.textPrimary
                                     font.pixelSize: 13
                                     selectByMouse: true
+                                    maximumLength: 2048
                                     text: root.addUrl
                                     onTextChanged: root.addUrl = text
                                     Keys.onPressed: function(event) {
