@@ -37,8 +37,32 @@ Item {
     property color danger: "#f87171"
     property int cornerRadius: 12
 
+    // Omarchy 4.0.3+ only injects shell.appLibrary into "menu"-kind plugins, so
+    // an overlay gets null. Fall back to Quickshell's own DesktopEntries.
+    function desktopEntryList() {
+        var out = []
+        try {
+            var vals = DesktopEntries.applications.values
+            for (var i = 0; i < vals.length; i++) out.push(vals[i])
+        } catch (e) {}
+        return out
+    }
+
+    function iconSource(icon) {
+        if (!icon) return ""
+        var name = String(icon)
+        if (root.appLibrary && typeof root.appLibrary.iconSource === "function") {
+            try {
+                var s = root.appLibrary.iconSource(name)
+                if (s) return s
+            } catch (e) {}
+        }
+        if (name.indexOf("/") === 0) return "file://" + name
+        try { return Quickshell.iconPath(name, true) || "" } catch (e) { return "" }
+    }
+
     function refreshApps() {
-        root.allApps = Tools.buildAppList(root.appLibrary, root.webApps)
+        root.allApps = Tools.buildAppList(root.appLibrary, root.webApps, root.desktopEntryList())
         root.applyFilter()
     }
 
@@ -176,7 +200,16 @@ Item {
 
     Connections {
         target: root.appLibrary
+        ignoreUnknownSignals: true
         function onAppsChanged() {
+            if (root.opened) root.refreshApps()
+        }
+    }
+
+    Connections {
+        target: DesktopEntries.applications
+        ignoreUnknownSignals: true
+        function onValuesChanged() {
             if (root.opened) root.refreshApps()
         }
     }
@@ -388,12 +421,7 @@ Item {
                                                         Layout.alignment: Qt.AlignVCenter
                                                         Image {
                                                             anchors.fill: parent
-                                                            source: {
-                                                                if (!root.appLibrary || !modelData.icon) return ""
-                                                                if (typeof root.appLibrary.iconSource === "function")
-                                                                    return root.appLibrary.iconSource(modelData.icon)
-                                                                return ""
-                                                            }
+                                                            source: root.iconSource(modelData.icon)
                                                             fillMode: Image.PreserveAspectFit
                                                             smooth: true
                                                             asynchronous: true

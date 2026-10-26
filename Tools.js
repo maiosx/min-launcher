@@ -143,7 +143,23 @@ function webAppsConfigPath() {
   return "\"$HOME/.config/omarchy/min-launcher-web-apps.json\""
 }
 
-function buildNativeAppList(appLibrary) {
+function makeNativeItem(appLibrary, entry) {
+  var appId = entryId(entry)
+  if (!appId) return null
+  return {
+    appId: appId,
+    name: entryName(appLibrary, entry).slice(0, MAX_NAME_LENGTH),
+    subtext: entrySubtext(appLibrary, entry).slice(0, MAX_NAME_LENGTH),
+    icon: entryIcon(entry),
+    url: "",
+    isWeb: false,
+    section: sectionForCategories(entryCategories(entry))
+  }
+}
+
+// Preferred source: Omarchy's AppLibrary. Omarchy 4.0.3+ only hands it to
+// "menu"-kind plugins, so overlay plugins normally get null here.
+function buildFromAppLibrary(appLibrary) {
   var out = []
   if (!appLibrary || typeof appLibrary.sortedEntries !== "function")
     return out
@@ -155,24 +171,40 @@ function buildNativeAppList(appLibrary) {
     var row = rows[i]
     var entry = row && row.entry ? row.entry : row
     if (!entry) continue
-    var appId = entryId(entry)
-    if (!appId) continue
-    var cats = entryCategories(entry)
-    out.push({
-      appId: appId,
-      name: entryName(appLibrary, entry).slice(0, MAX_NAME_LENGTH),
-      subtext: entrySubtext(appLibrary, entry).slice(0, MAX_NAME_LENGTH),
-      icon: entryIcon(entry),
-      url: "",
-      isWeb: false,
-      section: sectionForCategories(cats)
-    })
+    var item = makeNativeItem(appLibrary, entry)
+    if (item) out.push(item)
   }
   return out
 }
 
-function buildAppList(appLibrary, webApps) {
-  var out = buildNativeAppList(appLibrary)
+// Fallback source: Quickshell.DesktopEntries (plain JS array of DesktopEntry).
+function buildFromDesktopEntries(entries) {
+  var out = []
+  var seen = ({})
+  var list = entries || []
+  for (var i = 0; i < list.length; i++) {
+    var entry = list[i]
+    if (!entry || entry.noDisplay) continue
+    var item = makeNativeItem(null, entry)
+    if (!item || !item.name || seen[item.appId]) continue
+    seen[item.appId] = true
+    out.push(item)
+  }
+  out.sort(function(a, b) {
+    return a.name.toLowerCase() < b.name.toLowerCase() ? -1
+         : (a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0)
+  })
+  return out
+}
+
+function buildNativeAppList(appLibrary, desktopEntries) {
+  var out = buildFromAppLibrary(appLibrary)
+  if (out.length > 0) return out
+  return buildFromDesktopEntries(desktopEntries)
+}
+
+function buildAppList(appLibrary, webApps, desktopEntries) {
+  var out = buildNativeAppList(appLibrary, desktopEntries)
   var web = Array.isArray(webApps) ? webApps : defaultWebApps()
   for (var j = 0; j < web.length; j++)
     out.push(web[j])
