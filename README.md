@@ -1,6 +1,6 @@
 # Min Launcher
 <img width="1366" height="768" alt="Preview" src="Preview.png" />
-Fullscreen app launcher overlay for [Omarchy](https://omarchy.org) 4.x (Quattro / Quickshell).
+Fullscreen app launcher overlay for Omarchy 4.x (Quattro / Quickshell).
 
 **Layout** inspired by Design Engineer Tools. **Items** are installed native apps (Omarchy `AppLibrary` when the shell provides it, otherwise Quickshell `DesktopEntries`) plus a curated **Web Apps** section that opens in the browser.
 
