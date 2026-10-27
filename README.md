@@ -30,7 +30,7 @@ The payload argument (`'{}'`) is required by current Omarchy IPC.
 Suggested keybind in `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + M", "Min Launcher", "omarchy-shell shell toggle min-launcher '{}'")
+o.bind("SUPER + B", "Min Launcher", "omarchy-shell shell toggle min-launcher '{}'")
 ```
 
 ## Usage
