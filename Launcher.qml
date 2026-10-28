@@ -29,7 +29,25 @@ Item {
     property var fileResults: []
     property bool fileSearching: false
     readonly property string homeDir: Quickshell.env("HOME")
-    readonly property int listCount: mode === "files" ? fileResults.length : filteredApps.length
+    // Installed plugins (view / remove)
+    property var pluginRows: []
+    property bool pluginsLoading: false
+    property string removeStatus: ""
+    property bool removing: false
+    property bool removeConfirmOpen: false
+    property var removeTarget: null
+    readonly property string ownId: (manifest && manifest.id) ? String(manifest.id) : "min-launcher"
+    readonly property var filteredPlugins: {
+        var q = String(filterText).trim().toLowerCase()
+        if (q === "") return pluginRows
+        return pluginRows.filter(function(p) {
+            return (p.name + " " + p.id + " " + p.author + " " + p.description + " " + p.kinds)
+                       .toLowerCase().indexOf(q) >= 0
+        })
+    }
+    readonly property int listCount: mode === "files" ? fileResults.length
+                                     : mode === "plugins" ? filteredPlugins.length
+                                     : filteredApps.length
 
     // System-wide memory (kB), shown in the bottom-left meter
     property real sysUsedKb: 0
@@ -100,10 +118,96 @@ Item {
         root.fileResults = []
         if (m === "files") root.scheduleFileSearch()
         else fileTimer.stop()
+        if (m === "plugins") root.refreshPlugins()
         searchField.forceActiveFocus()
     }
 
-    function toggleMode() { setMode(root.mode === "apps" ? "files" : "apps") }
+    function toggleMode() {
+        var order = ["apps", "files", "plugins"]
+        setMode(order[(order.indexOf(root.mode) + 1) % order.length])
+    }
+
+    // ---- plugins: list + remove (same CLI the plugin manager uses) ----
+    function refreshPlugins() {
+        if (pluginProc.running) return
+        pluginProc.collected = ""
+        pluginProc.command = ["bash", root.infoScript, "plugins"]
+        root.pluginsLoading = true
+        pluginProc.running = true
+    }
+
+    function parsePlugins(text) {
+        var list = []
+        var meta = ({})
+        var lines = String(text).split("\n")
+        for (var i = 0; i < lines.length; i++) {
+            if (lines[i].length < 3 || lines[i][1] !== "\t") continue
+            var body = lines[i].slice(2)
+            try {
+                var data = JSON.parse(body)
+                if (lines[i][0] === "L" && Array.isArray(data)) list = data
+                else if (lines[i][0] === "M" && data && data.id) meta[String(data.id)] = data
+            } catch (e) { }
+        }
+        var rows = []
+        for (var j = 0; j < list.length; j++) {
+            var p = list[j]
+            if (!p || !p.id) continue
+            var id = String(p.id)
+            var x = meta[id] || ({})
+            var kinds = Array.isArray(x.kinds) ? x.kinds : (Array.isArray(p.kinds) ? p.kinds : [])
+            rows.push({
+                id: id,
+                name: String(x.name || p.name || id),
+                version: String(x.version || ""),
+                author: String(x.author || ""),
+                description: String(x.description || ""),
+                kinds: kinds.join(", "),
+                firstParty: p.firstParty === true,
+                enabled: p.enabled === true,
+                removable: p.firstParty !== true && id !== root.ownId
+            })
+        }
+        // third-party first (those are the ones you can act on), then by name
+        rows.sort(function(a, b) {
+            if (a.firstParty !== b.firstParty) return a.firstParty ? 1 : -1
+            return a.name.localeCompare(b.name)
+        })
+        return rows
+    }
+
+    function requestRemove(p) {
+        if (!p || !p.removable || root.removing) return
+        root.removeTarget = p
+        root.removeConfirmOpen = true
+    }
+
+    function requestRemoveSelected() {
+        if (root.mode !== "plugins") return
+        requestRemove(root.filteredPlugins[root.selectedIndex])
+    }
+
+    function cancelRemove() {
+        root.removeConfirmOpen = false
+        root.removeTarget = null
+        Qt.callLater(function() { searchField.forceActiveFocus() })
+    }
+
+    function confirmRemove() {
+        var p = root.removeTarget
+        root.removeConfirmOpen = false
+        root.removeTarget = null
+        Qt.callLater(function() { searchField.forceActiveFocus() })
+        if (!p || removeProc.running) return
+        root.removing = true
+        root.removeStatus = "Removing " + p.name + "…"
+        removeProc.name = p.name
+        removeProc.collected = ""
+        removeProc.command = ["bash", "-c",
+            "omarchy plugin remove \"$0\" --yes 2>&1 | { head -c 4096; cat >/dev/null; }; exit ${PIPESTATUS[0]}",
+            p.id]
+        removeProc.running = true
+    }
 
     function scheduleFileSearch() {
         if (String(root.filterText).trim().length < 2) {
@@ -207,6 +311,9 @@ Item {
         root.addTitle = ""
         root.addUrl = ""
         root.mode = "apps"
+        root.removeConfirmOpen = false
+        root.removeTarget = null
+        root.removeStatus = ""
         root.fileResults = []
         root.fileSearching = false
         root.appInfo = ({})
@@ -473,6 +580,55 @@ Item {
     }
 
     Process {
+        id: pluginProc
+        property string collected: ""
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (pluginProc.collected.length < 1048576)
+                    pluginProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            root.pluginRows = root.parsePlugins(pluginProc.collected)
+            root.pluginsLoading = false
+            pluginProc.collected = ""
+            if (root.selectedIndex >= root.listCount)
+                root.selectedIndex = Math.max(0, root.listCount - 1)
+        }
+    }
+
+    Process {
+        id: removeProc
+        property string name: ""
+        property string collected: ""
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (removeProc.collected.length < 4096)
+                    removeProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            root.removing = false
+            if (exitCode === 0) {
+                root.removeStatus = "Removed " + removeProc.name
+                root.refreshPlugins()
+            } else {
+                var out = String(removeProc.collected).trim().split("\n")
+                var last = out.length ? out[out.length - 1] : ""
+                root.removeStatus = "Remove failed" + (last ? ": " + last : "")
+            }
+            removeProc.collected = ""
+            removeStatusTimer.restart()
+        }
+    }
+
+    Timer {
+        id: removeStatusTimer
+        interval: 6000
+        onTriggered: if (!root.removing) root.removeStatus = ""
+    }
+
+    Process {
         id: fileProc
         property string term: ""
         property string collected: ""
@@ -592,7 +748,8 @@ Item {
                         Repeater {
                             model: [
                                 { key: "apps", label: "Apps" },
-                                { key: "files", label: "Files" }
+                                { key: "files", label: "Files" },
+                                { key: "plugins", label: "Plugins" }
                             ]
                             Text {
                                 text: modelData.label
@@ -612,7 +769,11 @@ Item {
                         }
                     }
                     Text {
-                        text: root.mode === "files"
+                        text: root.mode === "plugins"
+                              ? (root.removeStatus !== "" ? root.removeStatus
+                                 : (root.pluginsLoading && root.pluginRows.length === 0 ? "Loading…"
+                                    : root.filteredPlugins.length + " plugins"))
+                              : root.mode === "files"
                               ? (String(root.filterText).trim().length < 2 ? "Search ~ by file name"
                                  : (root.fileSearching && root.fileResults.length === 0 ? "Searching…"
                                     : root.fileResults.length + " results"))
@@ -645,9 +806,12 @@ Item {
                         clip: true
                         text: root.filterText
                         onTextChanged: root.filterText = text
-                        enabled: !root.addDialogOpen
+                        enabled: !root.addDialogOpen && !root.removeConfirmOpen
                         Keys.onPressed: function(event) {
-                            if (event.key === Qt.Key_Escape) {
+                            if (event.key === Qt.Key_D && (event.modifiers & Qt.ControlModifier)
+                                && root.mode === "plugins") {
+                                root.requestRemoveSelected(); event.accepted = true
+                            } else if (event.key === Qt.Key_Escape) {
                                 if (root.filterText.length > 0) {
                                     root.filterText = ""
                                     searchField.text = ""
@@ -673,7 +837,8 @@ Item {
                         anchors.fill: parent
                         anchors.leftMargin: 12
                         verticalAlignment: Text.AlignVCenter
-                        text: root.mode === "files" ? "Search files in ~…" : "Filter apps…"
+                        text: root.mode === "files" ? "Search files in ~…"
+                              : root.mode === "plugins" ? "Filter plugins…" : "Filter apps…"
                         color: root.textMuted
                         font.pixelSize: 13
                         visible: !searchField.text && !searchField.activeFocus
@@ -985,6 +1150,177 @@ Item {
                     }
                 }
 
+                ListView {
+                    id: pluginList
+                    visible: root.mode === "plugins"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: root.filteredPlugins
+                    boundsBehavior: Flickable.StopAtBounds
+                    spacing: 2
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; width: 6 }
+                    Connections {
+                        target: root
+                        function onSelectedIndexChanged() {
+                            if (root.mode === "plugins" && root.selectedIndex < pluginList.count)
+                                pluginList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+                        }
+                    }
+                    delegate: Rectangle {
+                        id: prow
+                        width: pluginList.width
+                        height: 62
+                        radius: 10
+                        color: index === root.selectedIndex ? Qt.rgba(0.49, 0.42, 0.97, 0.18)
+                               : (prowMa.containsMouse ? root.hoverBg : "transparent")
+
+                        MouseArea {
+                            id: prowMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onContainsMouseChanged: if (containsMouse) root.selectedIndex = index
+                        }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            spacing: 14
+
+                            Rectangle {
+                                Layout.preferredWidth: 36
+                                Layout.preferredHeight: 36
+                                Layout.alignment: Qt.AlignVCenter
+                                radius: 9
+                                color: Qt.rgba(1, 1, 1, 0.06)
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.name.slice(0, 1).toUpperCase()
+                                    textFormat: Text.PlainText
+                                    color: root.accentDot(index)
+                                    font.pixelSize: 16
+                                    font.weight: Font.DemiBold
+                                    font.family: "Inter, system-ui, sans-serif"
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.alignment: Qt.AlignVCenter
+                                spacing: 3
+                                RowLayout {
+                                    spacing: 8
+                                    Text {
+                                        text: modelData.name
+                                        textFormat: Text.PlainText
+                                        color: root.textPrimary
+                                        font.pixelSize: 14
+                                        font.weight: Font.DemiBold
+                                        font.family: "Inter, system-ui, sans-serif"
+                                        elide: Text.ElideRight
+                                        Layout.maximumWidth: pluginList.width * 0.4
+                                    }
+                                    Text {
+                                        visible: modelData.version !== ""
+                                        text: "v" + modelData.version
+                                        textFormat: Text.PlainText
+                                        color: root.textMuted
+                                        font.pixelSize: 11
+                                        font.family: "Inter, system-ui, sans-serif"
+                                    }
+                                    Rectangle {
+                                        visible: modelData.firstParty
+                                        implicitWidth: biText.implicitWidth + 12
+                                        implicitHeight: 16
+                                        radius: 8
+                                        color: Qt.rgba(1, 1, 1, 0.07)
+                                        Text {
+                                            id: biText
+                                            anchors.centerIn: parent
+                                            text: "built-in"
+                                            color: root.textMuted
+                                            font.pixelSize: 9
+                                            font.family: "Inter, system-ui, sans-serif"
+                                        }
+                                    }
+                                    Rectangle {
+                                        implicitWidth: enText.implicitWidth + 12
+                                        implicitHeight: 16
+                                        radius: 8
+                                        color: modelData.enabled ? Qt.rgba(0.2, 0.83, 0.6, 0.16) : Qt.rgba(1, 1, 1, 0.05)
+                                        Text {
+                                            id: enText
+                                            anchors.centerIn: parent
+                                            text: modelData.enabled ? "enabled" : "disabled"
+                                            color: modelData.enabled ? "#34d399" : root.textMuted
+                                            font.pixelSize: 9
+                                            font.family: "Inter, system-ui, sans-serif"
+                                        }
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.description !== "" ? modelData.description : modelData.id
+                                    textFormat: Text.PlainText
+                                    color: "#9a9aa6"
+                                    font.pixelSize: 12
+                                    font.family: "Inter, system-ui, sans-serif"
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: [modelData.author !== "" ? "by " + modelData.author : "",
+                                           modelData.id,
+                                           modelData.kinds].filter(function(s) { return s !== "" }).join("  ·  ")
+                                    textFormat: Text.PlainText
+                                    color: root.textMuted
+                                    font.pixelSize: 10
+                                    font.family: "Inter, system-ui, sans-serif"
+                                    elide: Text.ElideRight
+                                }
+                            }
+
+                            Rectangle {
+                                visible: modelData.removable
+                                Layout.preferredWidth: 32
+                                Layout.preferredHeight: 32
+                                Layout.alignment: Qt.AlignVCenter
+                                radius: 8
+                                color: trashMa.containsMouse ? Qt.rgba(0.97, 0.44, 0.44, 0.18) : "transparent"
+                                opacity: (trashMa.containsMouse || prow.ListView.isCurrentItem
+                                          || index === root.selectedIndex) ? 1 : 0.45
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "✕"
+                                    color: trashMa.containsMouse ? root.danger : root.textMuted
+                                    font.pixelSize: 15
+                                }
+                                MouseArea {
+                                    id: trashMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.requestRemove(modelData)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    visible: root.mode === "plugins" && root.filteredPlugins.length === 0
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    text: root.pluginsLoading ? "Loading plugins…"
+                          : (String(root.filterText).trim() !== "" ? "No matching plugins" : "No plugins found")
+                    color: root.textMuted
+                    font.pixelSize: 13
+                    font.family: "Inter, system-ui, sans-serif"
+                }
+
                 Text {
                     visible: root.mode === "files" && root.fileResults.length === 0
                     Layout.fillWidth: true
@@ -1001,8 +1337,10 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: root.mode === "files"
-                          ? "↑↓ navigate  ·  Enter open  ·  Ctrl+Tab apps  ·  Esc close"
-                          : "↑↓ navigate  ·  Enter launch  ·  Ctrl+Tab files  ·  Esc close"
+                          ? "↑↓ navigate  ·  Enter open  ·  Ctrl+Tab next tab  ·  Esc close"
+                          : root.mode === "plugins"
+                          ? "↑↓ navigate  ·  Ctrl+D remove  ·  Ctrl+Tab next tab  ·  Esc close"
+                          : "↑↓ navigate  ·  Enter launch  ·  Ctrl+Tab next tab  ·  Esc close"
                     color: root.textMuted
                     font.pixelSize: 11
                     horizontalAlignment: Text.AlignHCenter
@@ -1094,6 +1432,82 @@ Item {
                         root.addUrl = ""
                         root.addDialogOpen = true
                         Qt.callLater(function() { titleField.forceActiveFocus() })
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: root.removeConfirmOpen
+                anchors.fill: parent
+                color: Qt.rgba(0, 0, 0, 0.65)
+                z: 40
+                MouseArea { anchors.fill: parent; onClicked: root.cancelRemove() }
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: Math.min(440, parent.width - 48)
+                    height: confirmCol.implicitHeight + 40
+                    radius: 14
+                    color: "#0c0c0e"
+                    border.color: root.borderColor
+                    border.width: 1
+                    MouseArea { anchors.fill: parent; onClicked: { } }
+                    ColumnLayout {
+                        id: confirmCol
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 20
+                        spacing: 12
+                        Text {
+                            text: "Remove plugin?"
+                            color: root.textPrimary
+                            font.pixelSize: 16
+                            font.weight: Font.DemiBold
+                            font.family: "Inter, system-ui, sans-serif"
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            textFormat: Text.PlainText
+                            text: root.removeTarget
+                                  ? root.removeTarget.name + " (" + root.removeTarget.id
+                                    + ") will be uninstalled and its files deleted. This can't be undone."
+                                  : ""
+                            color: "#9a9aa6"
+                            font.pixelSize: 13
+                            font.family: "Inter, system-ui, sans-serif"
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+                            Layout.topMargin: 4
+                            Item { Layout.fillWidth: true }
+                            Rectangle {
+                                width: 88; height: 34; radius: 8
+                                color: rmCancelMa.containsMouse ? root.hoverBg : "transparent"
+                                border.color: root.borderColor; border.width: 1
+                                Text { anchors.centerIn: parent; text: "Cancel"; color: root.textMuted; font.pixelSize: 13 }
+                                MouseArea {
+                                    id: rmCancelMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.cancelRemove()
+                                }
+                            }
+                            Rectangle {
+                                width: 88; height: 34; radius: 8
+                                color: rmOkMa.containsMouse ? Qt.lighter(root.danger, 1.1) : root.danger
+                                Text { anchors.centerIn: parent; text: "Remove"; color: "#ffffff"; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                MouseArea {
+                                    id: rmOkMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.confirmRemove()
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1237,7 +1651,11 @@ Item {
             anchors.fill: parent
             focus: root.opened && !searchField.activeFocus && !root.addDialogOpen
             Keys.onPressed: function(event) {
-                if (event.key === Qt.Key_Escape) {
+                if (root.removeConfirmOpen) {
+                    if (event.key === Qt.Key_Escape) root.cancelRemove()
+                    else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) root.confirmRemove()
+                    event.accepted = true
+                } else if (event.key === Qt.Key_Escape) {
                     if (root.addDialogOpen) root.addDialogOpen = false
                     else root.dismiss()
                     event.accepted = true
@@ -1247,6 +1665,8 @@ Item {
                     root.moveRow(1); event.accepted = true
                 } else if (event.key === Qt.Key_Up) {
                     root.moveRow(-1); event.accepted = true
+                } else if (event.key === Qt.Key_D && (event.modifiers & Qt.ControlModifier)) {
+                    root.requestRemoveSelected(); event.accepted = true
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                     root.launchAt(root.selectedIndex); event.accepted = true
                 }

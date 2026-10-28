@@ -4,6 +4,7 @@
 # Usage:  appinfo.sh size <desktop-id>  ->  SIZE=<human>   (empty if unknown)
 #         appinfo.sh ram                ->  "<desktop-id><TAB><human>" per running app
 #         appinfo.sh files <query>      ->  "<d|f><TAB><path>" per match in $HOME (shallowest first)
+#         appinfo.sh plugins            ->  "L<TAB><plugin list json>" + "M<TAB><manifest json>" per manifest
 #         appinfo.sh sys                ->  "USED=<kB> TOTAL=<kB>" system-wide memory
 
 mode=${1:-}
@@ -38,6 +39,25 @@ if [ "$mode" = files ]; then
     | sort -n -s -k1,1 \
     | head -n 100 \
     | cut -f2-
+  exit 0
+fi
+
+# ============================ installed plugins ==============================
+# Same sources the plugin manager uses: `omarchy plugin list --json` for the
+# list and enabled state, plus each plugin's manifest for version/author/etc.
+if [ "$mode" = plugins ]; then
+  command -v omarchy >/dev/null 2>&1 || exit 0
+  printf 'L\t'
+  omarchy plugin list --json 2>/dev/null | tr -d '\n\r'
+  printf '\n'
+  for base in "${OMARCHY_PATH:-}/shell/plugins" "${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"; do
+    [ -d "$base" ] || continue
+    while IFS= read -r -d '' f; do
+      printf 'M\t'
+      head -c 65536 "$f" | tr -d '\n\r'
+      printf '\n'
+    done < <(find -L "$base" -maxdepth 4 -type f \( -name manifest.json -o -name '*.manifest.json' \) -print0 2>/dev/null)
+  done
   exit 0
 fi
 
