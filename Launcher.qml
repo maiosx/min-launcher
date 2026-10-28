@@ -18,8 +18,14 @@ Item {
     property string addTitle: ""
     property string addUrl: ""
 
+    // Hover info (disk size + RAM), filled lazily by appinfo.sh
+    property var appInfo: ({})
+    property var hoverApp: null
+    property var pendingApp: null
+
     readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "min-launcher"
     readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
+    readonly property string infoScript: decodeURIComponent(String(Qt.resolvedUrl("appinfo.sh")).replace(/^file:\/\//, ""))
     readonly property string webAppsPath: Quickshell.env("HOME") + "/.config/omarchy/min-launcher-web-apps.json"
 
     property var webApps: []
@@ -79,6 +85,9 @@ Item {
         root.addDialogOpen = false
         root.addTitle = ""
         root.addUrl = ""
+        root.appInfo = ({})
+        root.hoverApp = null
+        root.pendingApp = null
         if (!root.webAppsLoaded)
             loadWebApps()
         else
@@ -92,6 +101,8 @@ Item {
 
     function close() {
         root.opened = false
+        root.hoverApp = null
+        root.pendingApp = null
         root.filterText = ""
         root.selectedIndex = 0
         root.addDialogOpen = false
@@ -179,6 +190,43 @@ Item {
         launchApp(root.filteredApps[index])
     }
 
+    function requestInfo(app) {
+        if (!app || app.isWeb || !app.appId) return
+        root.pendingApp = app
+        if (!infoProc.running) startInfo()
+    }
+
+    function startInfo() {
+        var app = root.pendingApp
+        if (!app) return
+        root.pendingApp = null
+        var cached = root.appInfo[app.appId]
+        infoProc.appId = app.appId
+        infoProc.collected = ""
+        infoProc.command = ["bash", root.infoScript,
+                            (cached && cached.sized) ? "0" : "1",
+                            String(app.appId)]
+        infoProc.running = true
+    }
+
+    function storeInfo(appId, text) {
+        var prev = root.appInfo[appId] || {}
+        var next = { size: prev.size || "", sized: !!prev.sized, ram: "", running: false }
+        var lines = String(text).split("\n")
+        for (var i = 0; i < lines.length; i++) {
+            var eq = lines[i].indexOf("=")
+            if (eq < 0) continue
+            var key = lines[i].slice(0, eq)
+            var val = lines[i].slice(eq + 1).trim()
+            if (key === "SIZE") { next.size = val; next.sized = true }
+            else if (key === "RAM" && val.length > 0) { next.ram = val; next.running = true }
+        }
+        var map = ({})
+        for (var k in root.appInfo) map[k] = root.appInfo[k]
+        map[appId] = next
+        root.appInfo = map
+    }
+
     function flatIndexOf(app) {
         if (!app) return -1
         for (var i = 0; i < root.filteredApps.length; i++) {
@@ -235,6 +283,38 @@ Item {
 
     Process {
         id: saveProc
+    }
+
+    Process {
+        id: infoProc
+        property string appId: ""
+        property string collected: ""
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (infoProc.collected.length < 4096)
+                    infoProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            if (infoProc.appId) root.storeInfo(infoProc.appId, infoProc.collected)
+            infoProc.collected = ""
+            if (root.pendingApp) root.startInfo()
+        }
+    }
+
+    // Small delay so sweeping the mouse across rows doesn't spawn a lookup per row
+    Timer {
+        id: hoverTimer
+        interval: 90
+        onTriggered: root.requestInfo(root.hoverApp)
+    }
+
+    // Keep RAM live while a row stays hovered
+    Timer {
+        interval: 2000
+        repeat: true
+        running: root.opened && root.hoverApp !== null
+        onTriggered: root.requestInfo(root.hoverApp)
     }
 
     PanelWindow {
@@ -446,6 +526,28 @@ Item {
                                                         elide: Text.ElideRight
                                                         Layout.fillWidth: true
                                                     }
+                                                    Text {
+                                                        id: sizeLabel
+                                                        readonly property var entry: root.appInfo[modelData.appId]
+                                                        visible: rowMa.containsMouse && !modelData.isWeb && !!entry && entry.size.length > 0
+                                                        text: entry ? entry.size : ""
+                                                        textFormat: Text.PlainText
+                                                        color: root.textMuted
+                                                        font.pixelSize: 11
+                                                        font.family: "Inter, system-ui, sans-serif"
+                                                        Layout.alignment: Qt.AlignVCenter
+                                                    }
+                                                    Text {
+                                                        id: ramLabel
+                                                        readonly property var entry: root.appInfo[modelData.appId]
+                                                        visible: rowMa.containsMouse && !modelData.isWeb && !!entry && entry.running
+                                                        text: entry ? ("● " + entry.ram + " RAM") : ""
+                                                        textFormat: Text.PlainText
+                                                        color: "#34d399"
+                                                        font.pixelSize: 11
+                                                        font.family: "Inter, system-ui, sans-serif"
+                                                        Layout.alignment: Qt.AlignVCenter
+                                                    }
                                                     Rectangle {
                                                         visible: !!(modelData.isWeb)
                                                         Layout.preferredWidth: 18
@@ -480,6 +582,13 @@ Item {
                                                         if (containsMouse) {
                                                             var idx = root.flatIndexOf(modelData)
                                                             if (idx >= 0) root.selectedIndex = idx
+                                                            if (!modelData.isWeb) {
+                                                                root.hoverApp = modelData
+                                                                hoverTimer.restart()
+                                                            }
+                                                        } else if (root.hoverApp && root.hoverApp.appId === modelData.appId) {
+                                                            root.hoverApp = null
+                                                            hoverTimer.stop()
                                                         }
                                                     }
                                                 }
