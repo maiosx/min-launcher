@@ -24,6 +24,13 @@ Item {
     property var hoverApp: null
     property var pendingApp: null
 
+    // "apps" or "files" (file search in the home directory)
+    property string mode: "apps"
+    property var fileResults: []
+    property bool fileSearching: false
+    readonly property string homeDir: Quickshell.env("HOME")
+    readonly property int listCount: mode === "files" ? fileResults.length : filteredApps.length
+
     // System-wide memory (kB), shown in the bottom-left meter
     property real sysUsedKb: 0
     property real sysTotalKb: 0
@@ -81,8 +88,116 @@ Item {
     function applyFilter() {
         root.filteredApps = Tools.filterApps(root.allApps, root.filterText)
         root.sections = Tools.buildSections(root.filteredApps)
-        if (root.selectedIndex >= root.filteredApps.length)
-            root.selectedIndex = Math.max(0, root.filteredApps.length - 1)
+        if (root.mode === "files") root.scheduleFileSearch()
+        if (root.selectedIndex >= root.listCount)
+            root.selectedIndex = Math.max(0, root.listCount - 1)
+    }
+
+    function setMode(m) {
+        if (root.mode === m) return
+        root.mode = m
+        root.selectedIndex = 0
+        root.fileResults = []
+        if (m === "files") root.scheduleFileSearch()
+        else fileTimer.stop()
+        searchField.forceActiveFocus()
+    }
+
+    function toggleMode() { setMode(root.mode === "apps" ? "files" : "apps") }
+
+    function scheduleFileSearch() {
+        if (String(root.filterText).trim().length < 2) {
+            fileTimer.stop()
+            root.fileResults = []
+            root.fileSearching = false
+            return
+        }
+        root.fileSearching = true
+        fileTimer.restart()
+    }
+
+    function runFileSearch() {
+        var term = String(root.filterText).trim()
+        if (term.length < 2) { root.fileSearching = false; return }
+        if (fileProc.running) { fileProc.rerun = true; return }
+        fileProc.rerun = false
+        fileProc.term = term
+        fileProc.collected = ""
+        fileProc.command = ["bash", root.infoScript, "files", term]
+        fileProc.running = true
+    }
+
+    function parseFiles(text) {
+        var out = []
+        var lines = String(text).split("\n")
+        for (var i = 0; i < lines.length; i++) {
+            var tab = lines[i].indexOf("\t")
+            if (tab !== 1) continue
+            var path = lines[i].slice(2)
+            if (!path) continue
+            var slash = path.lastIndexOf("/")
+            var dir = path.slice(0, slash)
+            if (dir === root.homeDir) dir = "~"
+            else if (dir.indexOf(root.homeDir + "/") === 0) dir = "~" + dir.slice(root.homeDir.length)
+            out.push({ path: path, name: path.slice(slash + 1), dir: dir, isDir: lines[i][0] === "d" })
+        }
+        return out
+    }
+
+    function openFile(f) {
+        if (!f || !f.path) return
+        Quickshell.execDetached([
+            "sh", "-c",
+            "setsid -f uwsm-app -- xdg-open \"$1\" >/dev/null 2>&1 || setsid -f xdg-open \"$1\" >/dev/null 2>&1",
+            "sh", String(f.path)
+        ])
+        dismiss()
+    }
+
+    readonly property string cacheDir: Quickshell.env("XDG_CACHE_HOME") || (homeDir + "/.cache")
+    readonly property var imageExts: ["png", "jpg", "jpeg", "webp", "bmp", "gif", "tiff", "avif", "svg"]
+
+    function extOf(f) {
+        var dot = f.name.lastIndexOf(".")
+        return (dot > 0 && dot < f.name.length - 1) ? f.name.slice(dot + 1).toLowerCase() : ""
+    }
+
+    function isImageFile(f) {
+        return !f.isDir && root.imageExts.indexOf(root.extOf(f)) >= 0
+    }
+
+    // freedesktop thumbnail cache entry (written by file managers); may not exist
+    function thumbCachePath(f, size) {
+        var uri = "file://" + encodeURI(f.path).replace(/\?/g, "%3F").replace(/#/g, "%23")
+        return "file://" + root.cacheDir + "/thumbnails/" + size + "/" + Qt.md5(uri) + ".png"
+    }
+
+    function iconNameFor(f) {
+        if (f.isDir) return "folder"
+        var e = root.extOf(f)
+        if (e === "pdf") return "application-pdf"
+        if (["mp4", "mkv", "webm", "mov", "avi"].indexOf(e) >= 0) return "video-x-generic"
+        if (["mp3", "flac", "ogg", "wav", "m4a", "opus"].indexOf(e) >= 0) return "audio-x-generic"
+        if (["zip", "tar", "gz", "xz", "zst", "7z", "rar", "bz2"].indexOf(e) >= 0) return "package-x-generic"
+        if (["doc", "docx", "odt", "rtf"].indexOf(e) >= 0) return "x-office-document"
+        if (["xls", "xlsx", "ods", "csv"].indexOf(e) >= 0) return "x-office-spreadsheet"
+        if (["ppt", "pptx", "odp"].indexOf(e) >= 0) return "x-office-presentation"
+        return "text-x-generic"
+    }
+
+    function moveRow(dir) {
+        if (root.mode !== "files") { root.moveSelection(dir); return }
+        var n = root.listCount
+        if (n === 0) return
+        var next = root.selectedIndex + dir * fileGrid.cols
+        if (next >= 0 && next < n) root.selectedIndex = next
+    }
+
+    function fileExt(f) {
+        if (f.isDir) return "DIR"
+        var dot = f.name.lastIndexOf(".")
+        if (dot <= 0 || dot === f.name.length - 1) return "FILE"
+        return f.name.slice(dot + 1, dot + 4).toUpperCase()
     }
 
     function open(payloadJson) {
@@ -91,6 +206,9 @@ Item {
         root.addDialogOpen = false
         root.addTitle = ""
         root.addUrl = ""
+        root.mode = "apps"
+        root.fileResults = []
+        root.fileSearching = false
         root.appInfo = ({})
         root.ramMap = ({})
         root.refreshRam()
@@ -195,6 +313,10 @@ Item {
     }
 
     function launchAt(index) {
+        if (root.mode === "files") {
+            if (index >= 0 && index < root.fileResults.length) openFile(root.fileResults[index])
+            return
+        }
         if (index < 0 || index >= root.filteredApps.length) return
         launchApp(root.filteredApps[index])
     }
@@ -263,7 +385,7 @@ Item {
     }
 
     function moveSelection(delta) {
-        var n = root.filteredApps.length
+        var n = root.listCount
         if (n === 0) return
         var next = root.selectedIndex + delta
         if (next < 0) next = n - 1
@@ -348,6 +470,35 @@ Item {
             ramProc.collected = ""
             root.ramMap = map
         }
+    }
+
+    Process {
+        id: fileProc
+        property string term: ""
+        property string collected: ""
+        property bool rerun: false
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (fileProc.collected.length < 262144)
+                    fileProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            var stale = fileProc.rerun || fileProc.term !== String(root.filterText).trim()
+            if (!stale && root.mode === "files") {
+                root.fileResults = root.parseFiles(fileProc.collected)
+                root.fileSearching = false
+                root.selectedIndex = 0
+            }
+            fileProc.collected = ""
+            if (stale && root.mode === "files") root.runFileSearch()
+        }
+    }
+
+    Timer {
+        id: fileTimer
+        interval: 180
+        onTriggered: root.runFileSearch()
     }
 
     Process {
@@ -436,15 +587,36 @@ Item {
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 4
-                    Text {
-                        text: "Apps"
-                        color: root.textPrimary
-                        font.pixelSize: 26
-                        font.weight: Font.DemiBold
-                        font.family: "Inter, system-ui, sans-serif"
+                    Row {
+                        spacing: 22
+                        Repeater {
+                            model: [
+                                { key: "apps", label: "Apps" },
+                                { key: "files", label: "Files" }
+                            ]
+                            Text {
+                                text: modelData.label
+                                color: root.mode === modelData.key ? root.textPrimary
+                                       : (tabMa.containsMouse ? "#c4c4cc" : "#55555f")
+                                font.pixelSize: 26
+                                font.weight: Font.DemiBold
+                                font.family: "Inter, system-ui, sans-serif"
+                                MouseArea {
+                                    id: tabMa
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.setMode(modelData.key)
+                                }
+                            }
+                        }
                     }
                     Text {
-                        text: root.filteredApps.length + " items"
+                        text: root.mode === "files"
+                              ? (String(root.filterText).trim().length < 2 ? "Search ~ by file name"
+                                 : (root.fileSearching && root.fileResults.length === 0 ? "Searching…"
+                                    : root.fileResults.length + " results"))
+                              : root.filteredApps.length + " items"
                         textFormat: Text.PlainText
                         color: root.textMuted
                         font.pixelSize: 13
@@ -481,10 +653,17 @@ Item {
                                     searchField.text = ""
                                 } else root.dismiss()
                                 event.accepted = true
-                            } else if (event.key === Qt.Key_Down || event.key === Qt.Key_Tab) {
+                            } else if ((event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab)
+                                       && (event.modifiers & Qt.ControlModifier)) {
+                                root.toggleMode(); event.accepted = true
+                            } else if (event.key === Qt.Key_Tab) {
                                 root.moveSelection(1); event.accepted = true
-                            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Backtab) {
+                            } else if (event.key === Qt.Key_Backtab) {
                                 root.moveSelection(-1); event.accepted = true
+                            } else if (event.key === Qt.Key_Down) {
+                                root.moveRow(1); event.accepted = true
+                            } else if (event.key === Qt.Key_Up) {
+                                root.moveRow(-1); event.accepted = true
                             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                                 root.launchAt(root.selectedIndex); event.accepted = true
                             }
@@ -494,7 +673,7 @@ Item {
                         anchors.fill: parent
                         anchors.leftMargin: 12
                         verticalAlignment: Text.AlignVCenter
-                        text: "Filter apps…"
+                        text: root.mode === "files" ? "Search files in ~…" : "Filter apps…"
                         color: root.textMuted
                         font.pixelSize: 13
                         visible: !searchField.text && !searchField.activeFocus
@@ -504,6 +683,7 @@ Item {
 
                 Flickable {
                     id: flick
+                    visible: root.mode === "apps"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     contentWidth: width
@@ -668,9 +848,161 @@ Item {
                     }
                 }
 
+                GridView {
+                    id: fileGrid
+                    visible: root.mode === "files"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: root.fileResults
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; width: 6 }
+
+                    readonly property int gap: 14
+                    readonly property int cols: Math.max(3, Math.min(8, Math.floor(width / 190)))
+                    // floor() so the columns always fit and never round down by one
+                    cellWidth: Math.floor(width / cols)
+                    cellHeight: Math.floor((cellWidth - gap) * 10 / 16) + gap
+
+                    Connections {
+                        target: root
+                        function onSelectedIndexChanged() {
+                            if (root.mode === "files" && root.selectedIndex < fileGrid.count)
+                                fileGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+                        }
+                    }
+
+                    delegate: Item {
+                        id: tile
+                        property int thumbStage: 0   // 0 large cache, 1 normal cache, 2 none
+                        readonly property bool active: index === root.selectedIndex || tileMa.containsMouse
+                        readonly property bool isImg: root.isImageFile(modelData)
+                        width: fileGrid.cellWidth - fileGrid.gap
+                        height: fileGrid.cellHeight - fileGrid.gap
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 10
+                            color: "#101014"
+                            border.width: index === root.selectedIndex ? 2 : 0
+                            border.color: root.accent
+                            clip: true
+
+                            Image {
+                                id: thumb
+                                anchors.fill: parent
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                smooth: true
+                                sourceSize.width: 640
+                                sourceSize.height: 640
+                                source: tile.isImg ? "file://" + modelData.path
+                                        : (modelData.isDir || tile.thumbStage > 1) ? ""
+                                        : root.thumbCachePath(modelData, tile.thumbStage === 0 ? "large" : "normal")
+                                onStatusChanged: {
+                                    if (status === Image.Error && !tile.isImg && tile.thumbStage < 2)
+                                        tile.thumbStage++
+                                }
+                            }
+
+                            // No thumbnail available: file-type icon + extension
+                            Column {
+                                anchors.centerIn: parent
+                                anchors.verticalCenterOffset: -10
+                                spacing: 6
+                                visible: thumb.status !== Image.Ready
+                                         && (!tile.isImg || thumb.status === Image.Error)
+                                Image {
+                                    id: typeIcon
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    width: 44
+                                    height: 44
+                                    sourceSize.width: 88
+                                    sourceSize.height: 88
+                                    source: root.iconSource(root.iconNameFor(modelData))
+                                    fillMode: Image.PreserveAspectFit
+                                    visible: status === Image.Ready
+                                }
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: root.fileExt(modelData)
+                                    textFormat: Text.PlainText
+                                    color: modelData.isDir ? root.accent : root.textMuted
+                                    font.pixelSize: typeIcon.visible ? 10 : 22
+                                    font.weight: Font.DemiBold
+                                    font.family: "Inter, system-ui, sans-serif"
+                                }
+                            }
+
+                            // Title at the bottom of the tile
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: tile.active ? 50 : 38
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "#00000000" }
+                                    GradientStop { position: 1.0; color: "#d8000000" }
+                                }
+                                Column {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    anchors.margins: 8
+                                    spacing: 1
+                                    Text {
+                                        width: parent.width
+                                        text: modelData.name
+                                        textFormat: Text.PlainText
+                                        elide: Text.ElideMiddle
+                                        color: root.textPrimary
+                                        font.pixelSize: 12
+                                        font.weight: Font.Medium
+                                        font.family: "Inter, system-ui, sans-serif"
+                                    }
+                                    Text {
+                                        visible: tile.active
+                                        width: parent.width
+                                        text: modelData.dir
+                                        textFormat: Text.PlainText
+                                        elide: Text.ElideLeft
+                                        color: root.textMuted
+                                        font.pixelSize: 10
+                                        font.family: "Inter, system-ui, sans-serif"
+                                    }
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            id: tileMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onContainsMouseChanged: if (containsMouse) root.selectedIndex = index
+                            onClicked: root.openFile(modelData)
+                        }
+                    }
+                }
+
+                Text {
+                    visible: root.mode === "files" && root.fileResults.length === 0
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    text: String(root.filterText).trim().length < 2 ? "Type to search your home folder"
+                          : (root.fileSearching ? "Searching…" : "No files found")
+                    color: root.textMuted
+                    font.pixelSize: 13
+                    font.family: "Inter, system-ui, sans-serif"
+                }
+
                 Text {
                     Layout.fillWidth: true
-                    text: "↑↓ navigate  ·  Enter launch  ·  Esc close"
+                    text: root.mode === "files"
+                          ? "↑↓ navigate  ·  Enter open  ·  Ctrl+Tab apps  ·  Esc close"
+                          : "↑↓ navigate  ·  Enter launch  ·  Ctrl+Tab files  ·  Esc close"
                     color: root.textMuted
                     font.pixelSize: 11
                     horizontalAlignment: Text.AlignHCenter
@@ -909,10 +1241,12 @@ Item {
                     if (root.addDialogOpen) root.addDialogOpen = false
                     else root.dismiss()
                     event.accepted = true
+                } else if (event.key === Qt.Key_Tab && (event.modifiers & Qt.ControlModifier)) {
+                    root.toggleMode(); event.accepted = true
                 } else if (event.key === Qt.Key_Down) {
-                    root.moveSelection(1); event.accepted = true
+                    root.moveRow(1); event.accepted = true
                 } else if (event.key === Qt.Key_Up) {
-                    root.moveSelection(-1); event.accepted = true
+                    root.moveRow(-1); event.accepted = true
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                     root.launchAt(root.selectedIndex); event.accepted = true
                 }

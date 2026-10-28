@@ -3,6 +3,7 @@
 #
 # Usage:  appinfo.sh size <desktop-id>  ->  SIZE=<human>   (empty if unknown)
 #         appinfo.sh ram                ->  "<desktop-id><TAB><human>" per running app
+#         appinfo.sh files <query>      ->  "<d|f><TAB><path>" per match in $HOME (shallowest first)
 #         appinfo.sh sys                ->  "USED=<kB> TOTAL=<kB>" system-wide memory
 
 mode=${1:-}
@@ -20,6 +21,23 @@ human() {
 if [ "$mode" = sys ]; then
   awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 }
        END { if (t > 0) printf "USED=%d TOTAL=%d\n", t - a, t }' /proc/meminfo 2>/dev/null
+  exit 0
+fi
+
+# ============================ file search in $HOME ============================
+if [ "$mode" = files ]; then
+  q=${2:-}
+  [ -n "${q// /}" ] || exit 0
+  # escape glob characters, then let spaces match anything in between
+  q=$(printf '%s' "$q" | sed -e 's/[][\\?*]/\\&/g' -e 's/  */*/g')
+  timeout 6 find "$HOME" -xdev -mindepth 1 \
+      \( -name '.*' -o -name node_modules -o -name __pycache__ -o -name target \) -prune -o \
+      -iname "*${q}*" -printf '%y\t%p\n' 2>/dev/null \
+    | head -n 5000 \
+    | awk -F'\t' '{ d = gsub("/", "/", $2); print d "\t" $1 "\t" $2 }' \
+    | sort -n -s -k1,1 \
+    | head -n 100 \
+    | cut -f2-
   exit 0
 fi
 

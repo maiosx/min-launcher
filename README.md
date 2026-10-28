@@ -35,6 +35,7 @@ o.bind("SUPER + B", "Min Launcher", "omarchy-shell shell toggle min-launcher '{}
 
 ## Usage
 
+- Click **Files** next to **Apps** (or press **Ctrl+Tab**) to search file and folder names in your home directory (hidden items, `node_modules` and similar are skipped); results show as a thumbnail grid with the name along the bottom of each tile (real previews for images, cached file-manager thumbnails for PDFs/videos when they exist, a file-type icon otherwise). ↑↓ move by row, Tab by one. Enter or click opens the result with `xdg-open`
 - Type to filter across all sections
 - Click an app or **Enter** to launch (native via `AppLibrary.launch` or `uwsm-app`/`gtk-launch`, web via browser)
 - **↑↓** move selection · **Esc** clear filter / close
