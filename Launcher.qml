@@ -24,6 +24,11 @@ Item {
     property var hoverApp: null
     property var pendingApp: null
 
+    // System-wide memory (kB), shown in the bottom-left meter
+    property real sysUsedKb: 0
+    property real sysTotalKb: 0
+    readonly property real sysFraction: sysTotalKb > 0 ? Math.min(1, sysUsedKb / sysTotalKb) : 0
+
     readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "min-launcher"
     readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
     readonly property string infoScript: decodeURIComponent(String(Qt.resolvedUrl("appinfo.sh")).replace(/^file:\/\//, ""))
@@ -89,6 +94,7 @@ Item {
         root.appInfo = ({})
         root.ramMap = ({})
         root.refreshRam()
+        root.refreshSysRam()
         root.hoverApp = null
         root.pendingApp = null
         if (!root.webAppsLoaded)
@@ -230,6 +236,19 @@ Item {
         ramProc.running = true
     }
 
+    function refreshSysRam() {
+        if (sysProc.running) return
+        sysProc.collected = ""
+        sysProc.command = ["bash", root.infoScript, "sys"]
+        sysProc.running = true
+    }
+
+    function formatKb(kb) {
+        var gb = kb / 1048576
+        if (gb >= 1) return gb.toFixed(1) + " GB"
+        return Math.round(kb / 1024) + " MB"
+    }
+
     function ramFor(appId) {
         var key = String(appId || "").replace(/\.desktop$/, "")
         return root.ramMap[key] || ""
@@ -331,6 +350,25 @@ Item {
         }
     }
 
+    Process {
+        id: sysProc
+        property string collected: ""
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (sysProc.collected.length < 1024)
+                    sysProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            var m = /USED=(\d+)\s+TOTAL=(\d+)/.exec(sysProc.collected)
+            if (m) {
+                root.sysUsedKb = parseInt(m[1])
+                root.sysTotalKb = parseInt(m[2])
+            }
+            sysProc.collected = ""
+        }
+    }
+
     // Small delay so sweeping the mouse across rows doesn't spawn a lookup per row
     Timer {
         id: hoverTimer
@@ -343,7 +381,7 @@ Item {
         interval: 3000
         repeat: true
         running: root.opened
-        onTriggered: root.refreshRam()
+        onTriggered: { root.refreshRam(); root.refreshSysRam() }
     }
 
     PanelWindow {
@@ -637,6 +675,63 @@ Item {
                     font.pixelSize: 11
                     horizontalAlignment: Text.AlignHCenter
                     opacity: 0.6
+                }
+            }
+
+            Item {
+                id: sysRamMeter
+                visible: root.sysTotalKb > 0
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 48
+                anchors.bottomMargin: 28
+                height: 48
+                width: 160
+                z: 20
+
+                readonly property color barColor: root.sysFraction >= 0.9 ? root.danger
+                                                 : root.sysFraction >= 0.75 ? "#fbbf24"
+                                                 : "#34d399"
+
+                Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: parent.width
+                    spacing: 6
+
+                    Row {
+                        width: parent.width
+                        Text {
+                            id: ramTitle
+                            text: "RAM"
+                            color: root.textMuted
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                            font.family: "Inter, system-ui, sans-serif"
+                        }
+                        Item { width: parent.width - ramTitle.width - ramValue.width; height: 1 }
+                        Text {
+                            id: ramValue
+                            text: root.formatKb(root.sysUsedKb) + " / " + root.formatKb(root.sysTotalKb)
+                            textFormat: Text.PlainText
+                            color: root.textPrimary
+                            font.pixelSize: 11
+                            font.family: "Inter, system-ui, sans-serif"
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 4
+                        radius: 2
+                        color: root.hoverBg
+                        Rectangle {
+                            width: Math.max(parent.radius * 2, parent.width * root.sysFraction)
+                            height: parent.height
+                            radius: parent.radius
+                            color: sysRamMeter.barColor
+                            Behavior on width { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
+                        }
+                    }
                 }
             }
 

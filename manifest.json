@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "min-launcher",
   "name": "Min Launcher",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "author": "maiosx",
   "license": "MIT",
   "description": "Fullscreen Design Engineer–style app launcher for Omarchy — installed native apps only, optional web URLs. Shows active app ram usage and size on disk on hover.",

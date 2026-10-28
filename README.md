@@ -39,6 +39,7 @@ o.bind("SUPER + B", "Min Launcher", "omarchy-shell shell toggle min-launcher '{}
 - Click an app or **Enter** to launch (native via `AppLibrary.launch` or `uwsm-app`/`gtk-launch`, web via browser)
 - **↑↓** move selection · **Esc** clear filter / close
 - Running apps show their **RAM** use (green, live, PSS summed across all their processes) next to the title; hover any native app to also see its **disk size**
+- The **RAM** meter (bottom left) shows live system-wide memory use; the bar turns amber above 75% and red above 90%
 - Use the **+** button (bottom right) to add a web app (title + URL)
 - Use the **−** next to a web app to remove it
 

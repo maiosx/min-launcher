@@ -3,6 +3,7 @@
 #
 # Usage:  appinfo.sh size <desktop-id>  ->  SIZE=<human>   (empty if unknown)
 #         appinfo.sh ram                ->  "<desktop-id><TAB><human>" per running app
+#         appinfo.sh sys                ->  "USED=<kB> TOTAL=<kB>" system-wide memory
 
 mode=${1:-}
 
@@ -14,6 +15,13 @@ human() {
     else printf "%.1f %s", b, u[i]
   }'
 }
+
+# ============================ RAM, whole system ===============================
+if [ "$mode" = sys ]; then
+  awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 }
+       END { if (t > 0) printf "USED=%d TOTAL=%d\n", t - a, t }' /proc/meminfo 2>/dev/null
+  exit 0
+fi
 
 # every applications/ dir that can hold .desktop files, highest priority first
 adirs=()
