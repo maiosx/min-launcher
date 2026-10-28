@@ -5,7 +5,7 @@
   "version": "2.2.0",
   "author": "maiosx",
   "license": "MIT",
-  "description": "Fullscreen Design Engineer–style app launcher for Omarchy — installed native apps only, optional web URLs. Shows active app ram usage, and size on disk on hover.",
+  "description": "Fullscreen Design Engineer–style app launcher for Omarchy — installed native apps only, optional web URLs. Shows active app ram usage and size on disk on hover.",
   "homepage": "https://github.com/maiosx/min-launcher",
   "kinds": ["overlay"],
   "activation": "on-demand",
