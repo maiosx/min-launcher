@@ -27,6 +27,8 @@ Item {
     // "apps" or "files" (file search in the home directory)
     property string mode: "apps"
     property var fileResults: []
+    property string fileDir: ""          // "" = whole home; else browse / search inside this folder
+    property var homeDirs: []
     property bool fileSearching: false
     readonly property string homeDir: Quickshell.env("HOME")
     // Installed plugins (view / remove)
@@ -116,7 +118,8 @@ Item {
         root.mode = m
         root.selectedIndex = 0
         root.fileResults = []
-        if (m === "files") root.scheduleFileSearch()
+        root.fileDir = ""
+        if (m === "files") { root.refreshHomeDirs(); root.scheduleFileSearch() }
         else fileTimer.stop()
         if (m === "plugins") root.refreshPlugins()
         searchField.forceActiveFocus()
@@ -209,8 +212,12 @@ Item {
         removeProc.running = true
     }
 
+    function fileSearchKey() {
+        return String(root.filterText).trim() + "\n" + root.fileDir
+    }
+
     function scheduleFileSearch() {
-        if (String(root.filterText).trim().length < 2) {
+        if (String(root.filterText).trim().length < 2 && root.fileDir === "") {
             fileTimer.stop()
             root.fileResults = []
             root.fileSearching = false
@@ -222,13 +229,48 @@ Item {
 
     function runFileSearch() {
         var term = String(root.filterText).trim()
-        if (term.length < 2) { root.fileSearching = false; return }
+        if (term.length < 2 && root.fileDir === "") { root.fileSearching = false; return }
         if (fileProc.running) { fileProc.rerun = true; return }
         fileProc.rerun = false
-        fileProc.term = term
+        fileProc.term = root.fileSearchKey()
         fileProc.collected = ""
-        fileProc.command = ["bash", root.infoScript, "files", term]
+        if (term.length < 2)
+            fileProc.command = ["bash", root.infoScript, "ls", root.fileDir]
+        else if (root.fileDir !== "")
+            fileProc.command = ["bash", root.infoScript, "files", term, root.fileDir]
+        else
+            fileProc.command = ["bash", root.infoScript, "files", term]
         fileProc.running = true
+    }
+
+    function setFileDir(d) {
+        root.fileDir = d
+        root.filterText = ""
+        searchField.text = ""
+        root.selectedIndex = 0
+        root.fileResults = []
+        root.scheduleFileSearch()
+        searchField.forceActiveFocus()
+    }
+
+    function fileDirUp() {
+        if (root.fileDir === "") return
+        var slash = root.fileDir.lastIndexOf("/")
+        var parent = slash > 0 ? root.fileDir.slice(0, slash) : ""
+        root.setFileDir(parent === root.homeDir || parent.indexOf(root.homeDir + "/") !== 0 ? "" : parent)
+    }
+
+    function shortPath(p) {
+        if (p === root.homeDir) return "~"
+        if (p.indexOf(root.homeDir + "/") === 0) return "~" + p.slice(root.homeDir.length)
+        return p
+    }
+
+    function refreshHomeDirs() {
+        if (dirsProc.running) return
+        dirsProc.collected = ""
+        dirsProc.command = ["bash", root.infoScript, "dirs"]
+        dirsProc.running = true
     }
 
     function parseFiles(text) {
@@ -248,8 +290,12 @@ Item {
         return out
     }
 
-    function openFile(f) {
+    function openFile(f, external) {
         if (!f || !f.path) return
+        if (f.isDir && external !== true) {
+            root.setFileDir(String(f.path))
+            return
+        }
         Quickshell.execDetached([
             "sh", "-c",
             "setsid -f uwsm-app -- xdg-open \"$1\" >/dev/null 2>&1 || setsid -f xdg-open \"$1\" >/dev/null 2>&1",
@@ -311,6 +357,7 @@ Item {
         root.addTitle = ""
         root.addUrl = ""
         root.mode = "apps"
+        root.fileDir = ""
         root.removeConfirmOpen = false
         root.removeTarget = null
         root.removeStatus = ""
@@ -419,9 +466,9 @@ Item {
         dismiss()
     }
 
-    function launchAt(index) {
+    function launchAt(index, external) {
         if (root.mode === "files") {
-            if (index >= 0 && index < root.fileResults.length) openFile(root.fileResults[index])
+            if (index >= 0 && index < root.fileResults.length) openFile(root.fileResults[index], external === true)
             return
         }
         if (index < 0 || index >= root.filteredApps.length) return
@@ -640,7 +687,7 @@ Item {
             }
         }
         onExited: function(exitCode, exitStatus) {
-            var stale = fileProc.rerun || fileProc.term !== String(root.filterText).trim()
+            var stale = fileProc.rerun || fileProc.term !== root.fileSearchKey()
             if (!stale && root.mode === "files") {
                 root.fileResults = root.parseFiles(fileProc.collected)
                 root.fileSearching = false
@@ -648,6 +695,28 @@ Item {
             }
             fileProc.collected = ""
             if (stale && root.mode === "files") root.runFileSearch()
+        }
+    }
+
+    Process {
+        id: dirsProc
+        property string collected: ""
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (dirsProc.collected.length < 65536)
+                    dirsProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            var names = String(dirsProc.collected).split("\n").filter(function(n) { return n.length > 0 })
+            var first = ["Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos"]
+            names.sort(function(a, b) {
+                var ia = first.indexOf(a), ib = first.indexOf(b)
+                if (ia >= 0 || ib >= 0) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+                return a.toLowerCase().localeCompare(b.toLowerCase())
+            })
+            root.homeDirs = names.slice(0, 24)
+            dirsProc.collected = ""
         }
     }
 
@@ -774,9 +843,10 @@ Item {
                                  : (root.pluginsLoading && root.pluginRows.length === 0 ? "Loading…"
                                     : root.filteredPlugins.length + " plugins"))
                               : root.mode === "files"
-                              ? (String(root.filterText).trim().length < 2 ? "Search ~ by file name"
+                              ? (String(root.filterText).trim().length < 2 && root.fileDir === "" ? "Search ~ by file name"
                                  : (root.fileSearching && root.fileResults.length === 0 ? "Searching…"
-                                    : root.fileResults.length + " results"))
+                                    : root.fileResults.length + (String(root.filterText).trim().length < 2 ? " items" : " results")
+                                      + (root.fileDir !== "" ? " in " + root.shortPath(root.fileDir) : "")))
                               : root.filteredApps.length + " items"
                         textFormat: Text.PlainText
                         color: root.textMuted
@@ -829,7 +899,7 @@ Item {
                             } else if (event.key === Qt.Key_Up) {
                                 root.moveRow(-1); event.accepted = true
                             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                                root.launchAt(root.selectedIndex); event.accepted = true
+                                root.launchAt(root.selectedIndex, (event.modifiers & Qt.ShiftModifier) !== 0); event.accepted = true
                             }
                         }
                     }
@@ -837,12 +907,81 @@ Item {
                         anchors.fill: parent
                         anchors.leftMargin: 12
                         verticalAlignment: Text.AlignVCenter
-                        text: root.mode === "files" ? "Search files in ~…"
+                        text: root.mode === "files" ? "Search files in " + (root.fileDir !== "" ? root.shortPath(root.fileDir) : "~") + "…"
                               : root.mode === "plugins" ? "Filter plugins…" : "Filter apps…"
                         color: root.textMuted
                         font.pixelSize: 13
                         visible: !searchField.text && !searchField.activeFocus
                         opacity: 0.65
+                    }
+                }
+
+                Flow {
+                    id: pillRow
+                    visible: root.mode === "files"
+                    Layout.fillWidth: true
+                    spacing: 8
+
+                    // "‹ Up" appears once you are inside a folder
+                    Rectangle {
+                        visible: root.fileDir !== ""
+                        height: 28
+                        width: upText.implicitWidth + 24
+                        radius: 14
+                        color: upMa.containsMouse ? root.hoverBg : "transparent"
+                        border.color: root.borderColor
+                        border.width: 1
+                        Text {
+                            id: upText
+                            anchors.centerIn: parent
+                            text: "‹ Up"
+                            color: root.textMuted
+                            font.pixelSize: 12
+                            font.family: "Inter, system-ui, sans-serif"
+                        }
+                        MouseArea {
+                            id: upMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.fileDirUp()
+                        }
+                    }
+
+                    Repeater {
+                        model: [{ label: "Home", path: "" }].concat(root.homeDirs.map(function(n) {
+                            return { label: n, path: root.homeDir + "/" + n }
+                        }))
+                        Rectangle {
+                            id: pill
+                            readonly property bool active: modelData.path === ""
+                                ? root.fileDir === ""
+                                : (root.fileDir === modelData.path
+                                   || root.fileDir.indexOf(modelData.path + "/") === 0)
+                            height: 28
+                            width: pillText.implicitWidth + 28
+                            radius: 14
+                            color: pill.active ? Qt.rgba(0.49, 0.42, 0.97, 0.25)
+                                   : (pillMa.containsMouse ? root.hoverBg : "transparent")
+                            border.color: pill.active ? root.accent : root.borderColor
+                            border.width: 1
+                            Text {
+                                id: pillText
+                                anchors.centerIn: parent
+                                text: modelData.label
+                                textFormat: Text.PlainText
+                                color: pill.active ? root.textPrimary : root.textMuted
+                                font.pixelSize: 12
+                                font.family: "Inter, system-ui, sans-serif"
+                            }
+                            MouseArea {
+                                id: pillMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.setFileDir(modelData.path)
+                            }
+                        }
                     }
                 }
 
@@ -1145,7 +1284,9 @@ Item {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onContainsMouseChanged: if (containsMouse) root.selectedIndex = index
-                            onClicked: root.openFile(modelData)
+                            onClicked: function(mouse) {
+                                root.openFile(modelData, (mouse.modifiers & Qt.ShiftModifier) !== 0)
+                            }
                         }
                     }
                 }
@@ -1327,8 +1468,9 @@ Item {
                     Layout.fillHeight: true
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    text: String(root.filterText).trim().length < 2 ? "Type to search your home folder"
-                          : (root.fileSearching ? "Searching…" : "No files found")
+                    text: (String(root.filterText).trim().length < 2 && root.fileDir === "") ? "Type to search your home folder, or pick a folder above"
+                          : (root.fileSearching ? "Searching…"
+                             : (String(root.filterText).trim().length < 2 ? "This folder is empty" : "No files found"))
                     color: root.textMuted
                     font.pixelSize: 13
                     font.family: "Inter, system-ui, sans-serif"
@@ -1337,7 +1479,7 @@ Item {
                 Text {
                     Layout.fillWidth: true
                     text: root.mode === "files"
-                          ? "↑↓ navigate  ·  Enter open  ·  Ctrl+Tab next tab  ·  Esc close"
+                          ? "↑↓ navigate  ·  Enter open  ·  Shift+Enter open folder externally  ·  Ctrl+Tab next tab  ·  Esc close"
                           : root.mode === "plugins"
                           ? "↑↓ navigate  ·  Ctrl+D remove  ·  Ctrl+Tab next tab  ·  Esc close"
                           : "↑↓ navigate  ·  Enter launch  ·  Ctrl+Tab next tab  ·  Esc close"
@@ -1668,7 +1810,7 @@ Item {
                 } else if (event.key === Qt.Key_D && (event.modifiers & Qt.ControlModifier)) {
                     root.requestRemoveSelected(); event.accepted = true
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    root.launchAt(root.selectedIndex); event.accepted = true
+                    root.launchAt(root.selectedIndex, (event.modifiers & Qt.ShiftModifier) !== 0); event.accepted = true
                 }
             }
         }

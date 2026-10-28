@@ -3,7 +3,9 @@
 #
 # Usage:  appinfo.sh size <desktop-id>  ->  SIZE=<human>   (empty if unknown)
 #         appinfo.sh ram                ->  "<desktop-id><TAB><human>" per running app
-#         appinfo.sh files <query>      ->  "<d|f><TAB><path>" per match in $HOME (shallowest first)
+#         appinfo.sh dirs               ->  one visible top-level folder name of $HOME per line
+#         appinfo.sh ls <dir>           ->  "<d|f><TAB><path>" for the direct children of <dir> (folders first)
+#         appinfo.sh files <query> [dir] ->  "<d|f><TAB><path>" per match in $HOME (shallowest first)
 #         appinfo.sh plugins            ->  "L<TAB><plugin list json>" + "M<TAB><manifest json>" per manifest
 #         appinfo.sh sys                ->  "USED=<kB> TOTAL=<kB>" system-wide memory
 
@@ -26,12 +28,40 @@ if [ "$mode" = sys ]; then
 fi
 
 # ============================ file search in $HOME ============================
+# Directories passed in must live inside $HOME and contain no ".." parts.
+home_dir_ok() {
+  case "$1" in
+    *..*) return 1 ;;
+    "$HOME"|"$HOME"/*) [ -d "$1" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "$mode" = dirs ]; then
+  find -L "$HOME" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n' 2>/dev/null | sort -f
+  exit 0
+fi
+
+if [ "$mode" = ls ]; then
+  dir=${2:-$HOME}
+  home_dir_ok "$dir" || exit 0
+  find -H "$dir" -mindepth 1 -maxdepth 1 ! -name '.*' -printf '%y\t%p\n' 2>/dev/null \
+    | head -n 2000 \
+    | awk -F'\t' '{ k = ($1 == "d") ? 0 : 1; print k "\t" tolower($2) "\t" $1 "\t" $2 }' \
+    | sort -t "$(printf '\t')" -k1,1n -k2,2 \
+    | head -n 300 \
+    | cut -f3-
+  exit 0
+fi
+
 if [ "$mode" = files ]; then
   q=${2:-}
+  root_dir=${3:-$HOME}
   [ -n "${q// /}" ] || exit 0
+  home_dir_ok "$root_dir" || exit 0
   # escape glob characters, then let spaces match anything in between
   q=$(printf '%s' "$q" | sed -e 's/[][\\?*]/\\&/g' -e 's/  */*/g')
-  timeout 6 find "$HOME" -xdev -mindepth 1 \
+  timeout 6 find -H "$root_dir" -xdev -mindepth 1 \
       \( -name '.*' -o -name node_modules -o -name __pycache__ -o -name target \) -prune -o \
       -iname "*${q}*" -printf '%y\t%p\n' 2>/dev/null \
     | head -n 5000 \
