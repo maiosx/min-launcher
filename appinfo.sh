@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
-# appinfo.sh — on-demand disk size + RAM lookup for one installed app (Min Launcher).
+# appinfo.sh — disk size + RAM lookups for Min Launcher.
 #
-# Usage:  appinfo.sh <want_size 0|1> <desktop-id>
-# Output: SIZE=<human>   (only when want_size=1; empty if it can't be determined)
-#         RAM=<human>    (only when the app is currently running)
+# Usage:  appinfo.sh size <desktop-id>  ->  SIZE=<human>   (empty if unknown)
+#         appinfo.sh ram                ->  "<desktop-id><TAB><human>" per running app
 
-want_size=${1:-0}
-did=${2%.desktop}
-[ -n "$did" ] || exit 0
+mode=${1:-}
 
 human() {
   awk -v b="$1" 'BEGIN {
@@ -18,34 +15,135 @@ human() {
   }'
 }
 
-# ---- locate the .desktop file ------------------------------------------------
-dirs=("${XDG_DATA_HOME:-$HOME/.local/share}")
-IFS=: read -ra xdg <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-dirs+=("${xdg[@]}" /var/lib/flatpak/exports/share "$HOME/.local/share/flatpak/exports/share")
+# every applications/ dir that can hold .desktop files, highest priority first
+adirs=()
+for d in "${XDG_DATA_HOME:-$HOME/.local/share}" $(echo "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}" | tr ':' ' ') \
+         /var/lib/flatpak/exports/share "$HOME/.local/share/flatpak/exports/share"; do
+  [ -d "${d%/}/applications" ] && adirs+=("${d%/}/applications")
+done
+
+# =============================== RAM, all apps ================================
+if [ "$mode" = ram ]; then
+  tmp=$(mktemp -d) || exit 0
+  trap 'rm -rf "$tmp"' EXIT
+
+  ps -u "$(id -u)" -o pid= -o comm= -o args= > "$tmp/ps" 2>/dev/null
+  # flatpak apps run in systemd scopes named app-flatpak-<id>-<n>.scope
+  grep -H -o -E 'app-flatpak-[^/]*\.scope' /proc/[0-9]*/cgroup 2>/dev/null \
+    | sed -E 's#^/proc/([0-9]+)/cgroup:app-flatpak-(.*)-[0-9]+\.scope$#\2 \1#' > "$tmp/fp"
+
+  cat > "$tmp/prog.awk" <<'AWK'
+function add(name, pid) { pids[name] = pids[name] " " pid }
+function base(p,   k, a) { k = split(p, a, "/"); return a[k] }
+function idof(path,   i, pre, rel) {
+  for (i = 1; i <= nd; i++) {
+    pre = D[i] "/"
+    if (index(path, pre) == 1) {
+      rel = substr(path, length(pre) + 1); sub(/\.desktop$/, "", rel); gsub("/", "-", rel)
+      return rel
+    }
+  }
+  return ""
+}
+function flush(   id, n, i, t, b, exe, fid, list, L, m, p, out, u) {
+  if (cur == "" || ex == "") return
+  id = idof(cur)
+  if (id == "" || (id in seen)) return
+  seen[id] = 1
+  n = split(ex, toks, " "); exe = ""; fid = ""
+  for (i = 1; i <= n; i++) {
+    t = toks[i]; gsub(/["']/, "", t)
+    if (t ~ /^-/ || t ~ /=/ || t ~ /^%/) continue
+    b = base(t)
+    if (b in wrap) continue
+    if (b == "flatpak") {
+      for (m = i + 1; m <= n; m++) if (toks[m] == "run") break
+      for (m = m + 1; m <= n; m++) if (toks[m] !~ /^-/) { fid = toks[m]; break }
+      break
+    }
+    exe = t; break
+  }
+  if (exe != "" && (base(exe) in gen)) exe = ""
+  if (exe == "" && fid == "") return
+  list = ""
+  if (fid != "") list = fp[fid]
+  else {
+    b = tolower(base(exe))
+    list = pids[b] " " pids[substr(b, 1, 15)]
+    if (wm != "") list = list " " pids[tolower(wm)]
+  }
+  m = split(list, L, " "); out = ""
+  for (i = 1; i <= m; i++) {
+    p = L[i]
+    if (p == "" || (p in u)) continue
+    u[p] = 1; out = out "," p
+  }
+  if (out != "") print id "\t" substr(out, 2)
+}
+BEGIN {
+  nd = split(dirs, D, ":")
+  split("env uwsm-app uwsm setsid nohup", W, " "); for (k in W) wrap[W[k]] = 1
+  split("sh bash dash zsh fish python python3 perl ruby node java xdg-open gtk-launch", G, " "); for (k in G) gen[G[k]] = 1
+}
+FILENAME == psf {
+  if ($1 == self || $1 == pp) next
+  c = tolower($2); b = tolower(base($3))
+  add(c, $1); if (b != c) add(b, $1)
+  next
+}
+FILENAME == fpf { fp[$1] = fp[$1] " " $2; next }
+{
+  if (FILENAME != cur) { flush(); cur = FILENAME; grp = 0; ex = ""; wm = "" }
+  if ($0 ~ /^\[/) { grp = ($0 == "[Desktop Entry]"); next }
+  if (grp && ex == "" && index($0, "Exec=") == 1) ex = substr($0, 6)
+  else if (grp && wm == "" && index($0, "StartupWMClass=") == 1) wm = substr($0, 16)
+}
+END { flush() }
+AWK
+
+  [ ${#adirs[@]} -gt 0 ] || exit 0
+  mapfile -d '' -t dfiles < <(find "${adirs[@]}" -name '*.desktop' -print0 2>/dev/null)
+  [ ${#dfiles[@]} -gt 0 ] || exit 0
+  dirlist=$(IFS=:; echo "${adirs[*]}")
+
+  while IFS=$'\t' read -r id plist; do
+    files=(); IFS=, read -ra pa <<< "$plist"
+    for p in "${pa[@]}"; do [ -r "/proc/$p/smaps_rollup" ] && files+=("/proc/$p/smaps_rollup"); done
+    kb=0
+    [ ${#files[@]} -gt 0 ] && kb=$(awk '/^Pss:/ { s += $2 } END { printf "%d", s }' "${files[@]}" 2>/dev/null)
+    if [ "${kb:-0}" -le 0 ]; then
+      files=()
+      for p in "${pa[@]}"; do [ -r "/proc/$p/status" ] && files+=("/proc/$p/status"); done
+      [ ${#files[@]} -gt 0 ] && kb=$(awk '/^VmRSS:/ { s += $2 } END { printf "%d", s }' "${files[@]}" 2>/dev/null)
+    fi
+    [ "${kb:-0}" -gt 0 ] && printf '%s\t%s\n' "$id" "$(human $((kb * 1024)))"
+  done < <(awk -v dirs="$dirlist" -v psf="$tmp/ps" -v fpf="$tmp/fp" -v self="$$" -v pp="$PPID" \
+             -f "$tmp/prog.awk" "$tmp/ps" "$tmp/fp" "${dfiles[@]}")
+  exit 0
+fi
+
+# =============================== size, one app ================================
+[ "$mode" = size ] || exit 0
+did=${2%.desktop}
+[ -n "$did" ] || exit 0
+
+finish_empty() { echo "SIZE="; exit 0; }
 
 file=""
-for d in "${dirs[@]}"; do
-  if [ -f "$d/applications/$did.desktop" ]; then file="$d/applications/$did.desktop"; break; fi
+for d in "${adirs[@]}"; do
+  if [ -f "$d/$did.desktop" ]; then file="$d/$did.desktop"; break; fi
 done
 if [ -z "$file" ]; then
-  for d in "${dirs[@]}"; do
-    [ -d "$d/applications" ] || continue
-    f=$(find "$d/applications" -name "$did.desktop" -print -quit 2>/dev/null)
+  for d in "${adirs[@]}"; do
+    f=$(find "$d" -name "$did.desktop" -print -quit 2>/dev/null)
     if [ -n "$f" ]; then file=$f; break; fi
   done
 fi
-
-finish_empty() { [ "$want_size" = 1 ] && echo "SIZE="; exit 0; }
 [ -n "$file" ] || finish_empty
 
-read_key() {
-  awk -v k="$1" '/^\[/ { g = ($0 == "[Desktop Entry]") }
-                 g && index($0, k "=") == 1 { sub(/^[^=]*=/, ""); print; exit }' "$file"
-}
-execline=$(read_key Exec)
-wmclass=$(read_key StartupWMClass)
+execline=$(awk '/^\[/ { g = ($0 == "[Desktop Entry]") }
+                g && index($0, "Exec=") == 1 { sub(/^[^=]*=/, ""); print; exit }' "$file")
 
-# ---- work out the real executable (skip env/uwsm wrappers, handle flatpak) ---
 read -ra toks <<< "$execline"
 n=${#toks[@]}; i=0; exe=""; flatpak_id=""
 while [ $i -lt $n ]; do
@@ -71,9 +169,8 @@ while [ $i -lt $n ]; do
   esac
 done
 
-exe_base=${exe##*/}
-case "$exe_base" in   # too generic to attribute size / processes to
-  sh|bash|dash|zsh|fish|python|python3|perl|ruby|node|java|xdg-open|gtk-launch) exe=""; exe_base="" ;;
+case "${exe##*/}" in
+  sh|bash|dash|zsh|fish|python|python3|perl|ruby|node|java|xdg-open|gtk-launch) exe="" ;;
 esac
 [ -n "$exe" ] || [ -n "$flatpak_id" ] || finish_empty
 
@@ -83,7 +180,6 @@ if [ -n "$exe" ]; then
   [ -n "$path" ] && real=$(readlink -f -- "$path" 2>/dev/null)
 fi
 
-# ---- disk size ---------------------------------------------------------------
 app_size_bytes() {
   local b="" pkg="" s="" top=""
   if [ -n "$flatpak_id" ]; then
@@ -123,41 +219,8 @@ app_size_bytes() {
   stat -c %s "$real" 2>/dev/null
 }
 
-if [ "$want_size" = 1 ]; then
-  sb=$(app_size_bytes)
-  case "$sb" in
-    ''|*[!0-9]*) echo "SIZE=" ;;
-    *) echo "SIZE=$(human "$sb")" ;;
-  esac
-fi
-
-# ---- RAM (PSS summed over every matching process of this user) ---------------
-pids=$(ps -u "$(id -u)" -o pid= -o comm= -o args= 2>/dev/null | awk \
-  -v self="$$" -v pp="$PPID" -v exe="$exe_base" -v cls="$wmclass" '
-  BEGIN { e = tolower(exe); c = tolower(cls); e15 = substr(e, 1, 15) }
-  {
-    if ($1 == self || $1 == pp) next
-    comm = tolower($2); k = split($3, parts, "/"); base = tolower(parts[k])
-    if ((e != "" && (base == e || comm == e || comm == e15)) ||
-        (c != "" && (comm == c || base == c))) print $1
-  }')
-
-if [ -n "$flatpak_id" ]; then
-  fp=$(grep -l -- "flatpak-$flatpak_id" /proc/[0-9]*/cgroup 2>/dev/null | cut -d/ -f3)
-  pids=$(printf '%s\n%s\n' "$pids" "$fp")
-fi
-pids=$(printf '%s\n' "$pids" | grep -E '^[0-9]+$' | grep -vx -e "$$" -e "$PPID" | sort -u)
-[ -n "$pids" ] || exit 0
-
-files=()
-for p in $pids; do [ -r "/proc/$p/smaps_rollup" ] && files+=("/proc/$p/smaps_rollup"); done
-kb=0
-if [ ${#files[@]} -gt 0 ]; then
-  kb=$(awk '/^Pss:/ { s += $2 } END { printf "%d", s }' "${files[@]}" 2>/dev/null)
-fi
-if [ "${kb:-0}" -le 0 ]; then
-  files=()
-  for p in $pids; do [ -r "/proc/$p/status" ] && files+=("/proc/$p/status"); done
-  [ ${#files[@]} -gt 0 ] && kb=$(awk '/^VmRSS:/ { s += $2 } END { printf "%d", s }' "${files[@]}" 2>/dev/null)
-fi
-if [ "${kb:-0}" -gt 0 ]; then echo "RAM=$(human $((kb * 1024)))"; fi
+sb=$(app_size_bytes)
+case "$sb" in
+  ''|*[!0-9]*) echo "SIZE=" ;;
+  *) echo "SIZE=$(human "$sb")" ;;
+esac

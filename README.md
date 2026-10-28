@@ -38,7 +38,7 @@ o.bind("SUPER + B", "Min Launcher", "omarchy-shell shell toggle min-launcher '{}
 - Type to filter across all sections
 - Click an app or **Enter** to launch (native via `AppLibrary.launch` or `uwsm-app`/`gtk-launch`, web via browser)
 - **↑↓** move selection · **Esc** clear filter / close
-- Hover a native app to see its **disk size** next to the title and, if it's running, its **RAM** use (live, PSS summed across all its processes)
+- Running apps show their **RAM** use (green, live, PSS summed across all their processes) next to the title; hover any native app to also see its **disk size**
 - Use the **+** button (bottom right) to add a web app (title + URL)
 - Use the **−** next to a web app to remove it
 
@@ -70,7 +70,7 @@ rm -f ~/.config/omarchy/min-launcher-web-apps.json
 manifest.json
 Launcher.qml    Fullscreen multi-column overlay
 Tools.js        AppLibrary list, Web Apps, filter, category grouping
-appinfo.sh      Hover lookup: installed size + running RAM for one app
+appinfo.sh      Lookups: running-app RAM (all apps) and installed size (on hover)
 Preview.png     Screenshot
 README.md
 LICENSE

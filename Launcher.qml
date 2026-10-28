@@ -18,7 +18,8 @@ Item {
     property string addTitle: ""
     property string addUrl: ""
 
-    // Hover info (disk size + RAM), filled lazily by appinfo.sh
+    // Disk size (looked up on hover) and RAM of running apps (polled while open)
+    property var ramMap: ({})
     property var appInfo: ({})
     property var hoverApp: null
     property var pendingApp: null
@@ -86,6 +87,8 @@ Item {
         root.addTitle = ""
         root.addUrl = ""
         root.appInfo = ({})
+        root.ramMap = ({})
+        root.refreshRam()
         root.hoverApp = null
         root.pendingApp = null
         if (!root.webAppsLoaded)
@@ -201,30 +204,35 @@ Item {
         if (!app) return
         root.pendingApp = null
         var cached = root.appInfo[app.appId]
+        if (cached && cached.sized) return
         infoProc.appId = app.appId
         infoProc.collected = ""
-        infoProc.command = ["bash", root.infoScript,
-                            (cached && cached.sized) ? "0" : "1",
-                            String(app.appId)]
+        infoProc.command = ["bash", root.infoScript, "size", String(app.appId)]
         infoProc.running = true
     }
 
     function storeInfo(appId, text) {
-        var prev = root.appInfo[appId] || {}
-        var next = { size: prev.size || "", sized: !!prev.sized, ram: "", running: false }
+        var size = ""
         var lines = String(text).split("\n")
         for (var i = 0; i < lines.length; i++) {
-            var eq = lines[i].indexOf("=")
-            if (eq < 0) continue
-            var key = lines[i].slice(0, eq)
-            var val = lines[i].slice(eq + 1).trim()
-            if (key === "SIZE") { next.size = val; next.sized = true }
-            else if (key === "RAM" && val.length > 0) { next.ram = val; next.running = true }
+            if (lines[i].indexOf("SIZE=") === 0) size = lines[i].slice(5).trim()
         }
         var map = ({})
         for (var k in root.appInfo) map[k] = root.appInfo[k]
-        map[appId] = next
+        map[appId] = { size: size, sized: true }
         root.appInfo = map
+    }
+
+    function refreshRam() {
+        if (ramProc.running) return
+        ramProc.collected = ""
+        ramProc.command = ["bash", root.infoScript, "ram"]
+        ramProc.running = true
+    }
+
+    function ramFor(appId) {
+        var key = String(appId || "").replace(/\.desktop$/, "")
+        return root.ramMap[key] || ""
     }
 
     function flatIndexOf(app) {
@@ -302,6 +310,27 @@ Item {
         }
     }
 
+    Process {
+        id: ramProc
+        property string collected: ""
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (ramProc.collected.length < 65536)
+                    ramProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            var map = ({})
+            var lines = ramProc.collected.split("\n")
+            for (var i = 0; i < lines.length; i++) {
+                var tab = lines[i].indexOf("\t")
+                if (tab > 0) map[lines[i].slice(0, tab)] = lines[i].slice(tab + 1).trim()
+            }
+            ramProc.collected = ""
+            root.ramMap = map
+        }
+    }
+
     // Small delay so sweeping the mouse across rows doesn't spawn a lookup per row
     Timer {
         id: hoverTimer
@@ -309,12 +338,12 @@ Item {
         onTriggered: root.requestInfo(root.hoverApp)
     }
 
-    // Keep RAM live while a row stays hovered
+    // Keep RAM numbers live while the launcher is open
     Timer {
-        interval: 2000
+        interval: 3000
         repeat: true
-        running: root.opened && root.hoverApp !== null
-        onTriggered: root.requestInfo(root.hoverApp)
+        running: root.opened
+        onTriggered: root.refreshRam()
     }
 
     PanelWindow {
@@ -539,9 +568,9 @@ Item {
                                                     }
                                                     Text {
                                                         id: ramLabel
-                                                        readonly property var entry: root.appInfo[modelData.appId]
-                                                        visible: rowMa.containsMouse && !modelData.isWeb && !!entry && entry.running
-                                                        text: entry ? ("● " + entry.ram + " RAM") : ""
+                                                        readonly property string ram: modelData.isWeb ? "" : root.ramFor(modelData.appId)
+                                                        visible: ram.length > 0
+                                                        text: "● " + ram
                                                         textFormat: Text.PlainText
                                                         color: "#34d399"
                                                         font.pixelSize: 11
