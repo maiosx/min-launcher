@@ -4,6 +4,8 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
+import QtQuick.Effects
 import "Tools.js" as Tools
 
 Item {
@@ -47,8 +49,32 @@ Item {
                        .toLowerCase().indexOf(q) >= 0
         })
     }
+    // Mission Control: every open window (all workspaces) with live previews + RAM
+    property var mcRam: ({})
+    property string mcPendingAddress: ""
+    readonly property var mcWindows: {
+        var list = Hyprland.toplevels.values.filter(function(t) {
+            var o = t.lastIpcObject
+            return t.wayland && o && o.at && o.size && o.pid > 0 && !o.hidden
+        })
+        function wsKey(t) {
+            var id = t.lastIpcObject.workspace ? t.lastIpcObject.workspace.id : 0
+            return id > 0 ? id : 9999
+        }
+        return list.sort(function(a, b) {
+            var d = wsKey(a) - wsKey(b)
+            if (d !== 0) return d
+            var A = a.lastIpcObject, B = b.lastIpcObject
+            var band = Math.round(A.at[1] / 300) - Math.round(B.at[1] / 300)
+            return band !== 0 ? band : A.at[0] - B.at[0]
+        })
+    }
+    readonly property string mcPidKey: mcWindows.map(function(t) { return t.lastIpcObject.pid }).join(" ")
+    onMcPidKeyChanged: if (root.mode === "mission") root.refreshMcRam()
+
     readonly property int listCount: mode === "files" ? fileResults.length
                                      : mode === "plugins" ? filteredPlugins.length
+                                     : mode === "mission" ? mcWindows.length
                                      : filteredApps.length
 
     // System-wide memory (kB), shown in the bottom-left meter
@@ -122,12 +148,55 @@ Item {
         if (m === "files") { root.refreshHomeDirs(); root.scheduleFileSearch() }
         else fileTimer.stop()
         if (m === "plugins") root.refreshPlugins()
-        searchField.forceActiveFocus()
+        if (m === "mission") {
+            root.refreshMission()
+            keyCatcher.forceActiveFocus()
+        } else {
+            searchField.forceActiveFocus()
+        }
     }
 
     function toggleMode() {
-        var order = ["apps", "files", "plugins"]
+        var order = ["apps", "files", "plugins", "mission"]
         setMode(order[(order.indexOf(root.mode) + 1) % order.length])
+    }
+
+    // ---- Mission Control: open windows, focus / close (Hyprland Lua dispatchers) ----
+    function refreshMission() {
+        Hyprland.refreshToplevels()
+        Hyprland.refreshWorkspaces()
+        root.refreshMcRam()
+    }
+
+    function refreshMcRam() {
+        if (mcRamProc.running) return
+        var pids = root.mcWindows.map(function(t) { return t.lastIpcObject.pid })
+        if (pids.length === 0) return
+        mcRamProc.collected = ""
+        mcRamProc.command = ["bash", root.infoScript, "pidram"].concat(pids.map(String))
+        mcRamProc.running = true
+    }
+
+    function mcRamText(t) {
+        var kb = root.mcRam[String(t.lastIpcObject.pid)]
+        return kb > 0 ? root.formatKb(kb) : ""
+    }
+
+    function mcFocus(t) {
+        if (!t) return
+        root.mcPendingAddress = String(t.address)
+        root.dismiss()
+        mcFocusTimer.restart()
+    }
+
+    function mcClose(t) {
+        if (!t) return
+        Hyprland.dispatch("hl.dsp.window.close({ window = 'address:0x" + t.address + "' })")
+        mcRefreshTimer.restart()
+    }
+
+    function mcCloseSelected() {
+        if (root.mode === "mission") mcClose(root.mcWindows[root.selectedIndex])
     }
 
     // ---- plugins: list + remove (same CLI the plugin manager uses) ----
@@ -336,10 +405,10 @@ Item {
     }
 
     function moveRow(dir) {
-        if (root.mode !== "files") { root.moveSelection(dir); return }
+        if (root.mode !== "files" && root.mode !== "mission") { root.moveSelection(dir); return }
         var n = root.listCount
         if (n === 0) return
-        var next = root.selectedIndex + dir * fileGrid.cols
+        var next = root.selectedIndex + dir * (root.mode === "mission" ? mcGrid.cols : fileGrid.cols)
         if (next >= 0 && next < n) root.selectedIndex = next
     }
 
@@ -467,6 +536,10 @@ Item {
     }
 
     function launchAt(index, external) {
+        if (root.mode === "mission") {
+            mcFocus(root.mcWindows[index])
+            return
+        }
         if (root.mode === "files") {
             if (index >= 0 && index < root.fileResults.length) openFile(root.fileResults[index], external === true)
             return
@@ -699,6 +772,42 @@ Item {
     }
 
     Process {
+        id: mcRamProc
+        property string collected: ""
+        stdout: SplitParser {
+            onRead: function(data) {
+                if (mcRamProc.collected.length < 65536)
+                    mcRamProc.collected += data + "\n"
+            }
+        }
+        onExited: function(exitCode, exitStatus) {
+            var map = ({})
+            var lines = String(mcRamProc.collected).split("\n")
+            for (var i = 0; i < lines.length; i++) {
+                var tab = lines[i].indexOf("\t")
+                if (tab > 0) map[lines[i].slice(0, tab)] = parseInt(lines[i].slice(tab + 1))
+            }
+            root.mcRam = map
+            mcRamProc.collected = ""
+        }
+    }
+
+    Timer {
+        id: mcFocusTimer
+        interval: 60   // let the overlay release keyboard focus first, or Hyprland undoes the switch
+        onTriggered: {
+            Hyprland.dispatch("hl.dsp.focus({ window = 'address:0x" + root.mcPendingAddress + "' })")
+            root.mcPendingAddress = ""
+        }
+    }
+
+    Timer {
+        id: mcRefreshTimer
+        interval: 250
+        onTriggered: root.refreshMission()
+    }
+
+    Process {
         id: dirsProc
         property string collected: ""
         stdout: SplitParser {
@@ -757,7 +866,10 @@ Item {
         interval: 3000
         repeat: true
         running: root.opened
-        onTriggered: { root.refreshRam(); root.refreshSysRam() }
+        onTriggered: {
+            root.refreshRam(); root.refreshSysRam()
+            if (root.mode === "mission") root.refreshMission()
+        }
     }
 
     PanelWindow {
@@ -818,7 +930,8 @@ Item {
                             model: [
                                 { key: "apps", label: "Apps" },
                                 { key: "files", label: "Files" },
-                                { key: "plugins", label: "Plugins" }
+                                { key: "plugins", label: "Plugins" },
+                                { key: "mission", label: "Mission Control" }
                             ]
                             Text {
                                 text: modelData.label
@@ -838,7 +951,9 @@ Item {
                         }
                     }
                     Text {
-                        text: root.mode === "plugins"
+                        text: root.mode === "mission"
+                              ? root.mcWindows.length + (root.mcWindows.length === 1 ? " window" : " windows")
+                              : root.mode === "plugins"
                               ? (root.removeStatus !== "" ? root.removeStatus
                                  : (root.pluginsLoading && root.pluginRows.length === 0 ? "Loading…"
                                     : root.filteredPlugins.length + " plugins"))
@@ -856,6 +971,7 @@ Item {
                 }
 
                 Rectangle {
+                    visible: root.mode !== "mission"
                     Layout.fillWidth: true
                     height: 34
                     radius: 8
@@ -1462,6 +1578,229 @@ Item {
                     font.family: "Inter, system-ui, sans-serif"
                 }
 
+                ScriptModel {
+                    id: mcModel
+                    values: root.mcWindows
+                }
+
+                GridView {
+                    id: mcGrid
+                    visible: root.mode === "mission"
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    model: mcModel
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; width: 6 }
+
+                    readonly property int gap: 16
+                    readonly property int cols: Math.max(2, Math.min(5, Math.floor(width / 270)))
+                    cellWidth: Math.floor(width / cols)
+                    cellHeight: Math.floor((cellWidth - gap) * 0.72) + gap
+
+                    Connections {
+                        target: root
+                        function onSelectedIndexChanged() {
+                            if (root.mode === "mission" && root.selectedIndex < mcGrid.count)
+                                mcGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+                        }
+                    }
+
+                    delegate: Item {
+                        id: mcTile
+                        required property var modelData
+                        required property int index
+                        readonly property var ipc: modelData ? modelData.lastIpcObject : null
+                        readonly property bool active: index === root.selectedIndex || mcMa.containsMouse
+                        readonly property real ar: (ipc && ipc.size && ipc.size[1] > 0) ? ipc.size[0] / ipc.size[1] : 1.6
+                        readonly property string ramText: root.mcRamText(modelData)
+                        width: mcGrid.cellWidth - mcGrid.gap
+                        height: mcGrid.cellHeight - mcGrid.gap
+
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: 12
+                            color: "#101014"
+                            border.width: index === root.selectedIndex ? 2 : 0
+                            border.color: root.accent
+                        }
+
+                        // live preview, fitted (not stretched) into the area above the title bar
+                        Item {
+                            id: previewArea
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.bottom: titleBar.top
+                            anchors.margins: 10
+                            anchors.bottomMargin: 6
+
+                            ScreencopyView {
+                                id: mcPreview
+                                readonly property real fitW: Math.min(previewArea.width, previewArea.height * mcTile.ar)
+                                width: fitW
+                                height: fitW / mcTile.ar
+                                anchors.centerIn: parent
+                                captureSource: (root.mode === "mission" && root.opened && mcTile.modelData)
+                                               ? mcTile.modelData.wayland : null
+                                live: true
+                                visible: false
+                            }
+                            Rectangle {
+                                id: mcMask
+                                width: mcPreview.width
+                                height: mcPreview.height
+                                anchors.centerIn: parent
+                                radius: 8
+                                visible: false
+                                layer.enabled: true
+                            }
+                            MultiEffect {
+                                anchors.fill: mcPreview
+                                source: mcPreview
+                                maskEnabled: true
+                                maskSource: mcMask
+                                maskThresholdMin: 0.5
+                                maskSpreadAtMin: 1.0
+                            }
+
+                            // workspace badge
+                            Rectangle {
+                                anchors.left: mcPreview.left
+                                anchors.top: mcPreview.top
+                                anchors.margins: 6
+                                height: 18
+                                width: wsText.implicitWidth + 12
+                                radius: 9
+                                color: Qt.rgba(0, 0, 0, 0.6)
+                                visible: mcTile.ipc && mcTile.ipc.workspace
+                                Text {
+                                    id: wsText
+                                    anchors.centerIn: parent
+                                    text: (mcTile.ipc && mcTile.ipc.workspace)
+                                          ? (mcTile.ipc.workspace.id > 0 ? "ws " + mcTile.ipc.workspace.id
+                                                                         : String(mcTile.ipc.workspace.name).replace("special:", ""))
+                                          : ""
+                                    textFormat: Text.PlainText
+                                    color: "#ffffff"
+                                    font.pixelSize: 10
+                                    font.family: "Inter, system-ui, sans-serif"
+                                }
+                            }
+                        }
+
+                        // icon + title + RAM, side by side
+                        RowLayout {
+                            id: titleBar
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            anchors.bottomMargin: 8
+                            height: 24
+                            spacing: 8
+
+                            Image {
+                                id: mcIcon
+                                readonly property var entry: {
+                                    DesktopEntries.applications.values
+                                    return DesktopEntries.heuristicLookup((mcTile.ipc && mcTile.ipc["class"]) || "")
+                                }
+                                readonly property string path: entry && entry.icon ? Quickshell.iconPath(entry.icon, true) : ""
+                                visible: path.length > 0
+                                source: path
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                                sourceSize.width: 40
+                                sourceSize.height: 40
+                                fillMode: Image.PreserveAspectFit
+                            }
+                            Text {
+                                text: mcTile.modelData ? mcTile.modelData.title : ""
+                                textFormat: Text.PlainText
+                                elide: Text.ElideRight
+                                color: mcTile.active ? root.textPrimary : "#c4c4cc"
+                                font.pixelSize: 12
+                                font.weight: Font.Medium
+                                font.family: "Inter, system-ui, sans-serif"
+                                Layout.maximumWidth: titleBar.width - (mcIcon.visible ? 28 : 0)
+                                                     - (mcTile.ramText !== "" ? ramBadge.width + 8 : 0)
+                            }
+                            Rectangle {
+                                id: ramBadge
+                                visible: mcTile.ramText !== ""
+                                height: 18
+                                width: ramLabel.implicitWidth + 14
+                                radius: 9
+                                color: Qt.rgba(0.49, 0.42, 0.97, 0.22)
+                                Text {
+                                    id: ramLabel
+                                    anchors.centerIn: parent
+                                    text: mcTile.ramText
+                                    textFormat: Text.PlainText
+                                    color: root.textPrimary
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                    font.family: "Inter, system-ui, sans-serif"
+                                }
+                            }
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        MouseArea {
+                            id: mcMa
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                            cursorShape: Qt.PointingHandCursor
+                            onContainsMouseChanged: if (containsMouse) root.selectedIndex = index
+                            onClicked: function(mouse) {
+                                if (mouse.button === Qt.MiddleButton) root.mcClose(mcTile.modelData)
+                                else root.mcFocus(mcTile.modelData)
+                            }
+                        }
+
+                        // close button, top-right on hover
+                        Rectangle {
+                            width: 24
+                            height: 24
+                            radius: 12
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 6
+                            visible: mcTile.active
+                            color: mcCloseMa.containsMouse ? root.danger : Qt.rgba(0.15, 0.15, 0.15, 0.92)
+                            border.color: Qt.rgba(1, 1, 1, 0.25)
+                            Text {
+                                anchors.centerIn: parent
+                                text: "✕"
+                                color: "#ffffff"
+                                font.pixelSize: 11
+                            }
+                            MouseArea {
+                                id: mcCloseMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.mcClose(mcTile.modelData)
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    visible: root.mode === "mission" && root.mcWindows.length === 0
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    text: "No open windows"
+                    color: root.textMuted
+                    font.pixelSize: 13
+                    font.family: "Inter, system-ui, sans-serif"
+                }
+
                 Text {
                     visible: root.mode === "files" && root.fileResults.length === 0
                     Layout.fillWidth: true
@@ -1480,6 +1819,8 @@ Item {
                     Layout.fillWidth: true
                     text: root.mode === "files"
                           ? "↑↓ navigate  ·  Enter open  ·  Shift+Enter open folder externally  ·  Ctrl+Tab next tab  ·  Esc close"
+                          : root.mode === "mission"
+                          ? "←↑↓→ navigate  ·  Enter focus  ·  Del close window  ·  Ctrl+Tab next tab  ·  Esc close"
                           : root.mode === "plugins"
                           ? "↑↓ navigate  ·  Ctrl+D remove  ·  Ctrl+Tab next tab  ·  Esc close"
                           : "↑↓ navigate  ·  Enter launch  ·  Ctrl+Tab next tab  ·  Esc close"
@@ -1807,6 +2148,12 @@ Item {
                     root.moveRow(1); event.accepted = true
                 } else if (event.key === Qt.Key_Up) {
                     root.moveRow(-1); event.accepted = true
+                } else if (root.mode === "mission" && (event.key === Qt.Key_Right || event.key === Qt.Key_Tab)) {
+                    root.moveSelection(1); event.accepted = true
+                } else if (root.mode === "mission" && (event.key === Qt.Key_Left || event.key === Qt.Key_Backtab)) {
+                    root.moveSelection(-1); event.accepted = true
+                } else if (root.mode === "mission" && event.key === Qt.Key_Delete) {
+                    root.mcCloseSelected(); event.accepted = true
                 } else if (event.key === Qt.Key_D && (event.modifiers & Qt.ControlModifier)) {
                     root.requestRemoveSelected(); event.accepted = true
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {

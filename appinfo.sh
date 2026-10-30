@@ -7,6 +7,7 @@
 #         appinfo.sh ls <dir>           ->  "<d|f><TAB><path>" for the direct children of <dir> (folders first)
 #         appinfo.sh files <query> [dir] ->  "<d|f><TAB><path>" per match in $HOME (shallowest first)
 #         appinfo.sh plugins            ->  "L<TAB><plugin list json>" + "M<TAB><manifest json>" per manifest
+#         appinfo.sh pidram <pid>...    ->  "<pid><TAB><kB>" resident memory of each pid plus its child processes
 #         appinfo.sh sys                ->  "USED=<kB> TOTAL=<kB>" system-wide memory
 
 mode=${1:-}
@@ -19,6 +20,27 @@ human() {
     else printf "%.1f %s", b, u[i]
   }'
 }
+
+# ====================== RAM per window (process trees) ========================
+# Browsers and Electron apps spread over many processes, so each window's pid
+# is summed together with all of its descendants.
+if [ "$mode" = pidram ]; then
+  shift
+  [ "$#" -gt 0 ] || exit 0
+  ps -e -o pid= -o ppid= -o rss= 2>/dev/null | awk -v want="$*" '
+    { rss[$1] = $3; kids[$2] = kids[$2] " " $1 }
+    function total(p,   n, a, i, t) {
+      t = rss[p] + 0
+      n = split(kids[p], a, " ")
+      for (i = 1; i <= n; i++) if (a[i] != p) t += total(a[i])
+      return t
+    }
+    END {
+      n = split(want, w, " ")
+      for (i = 1; i <= n; i++) if (w[i] ~ /^[0-9]+$/ && (w[i] in rss)) printf "%s\t%d\n", w[i], total(w[i])
+    }'
+  exit 0
+fi
 
 # ============================ RAM, whole system ===============================
 if [ "$mode" = sys ]; then
